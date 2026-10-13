@@ -1,0 +1,20 @@
+services:
+  artesian:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: artesian:latest
+    container_name: artesian
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "80:80/tcp"
+      - "8080:8080/tcp"
+
+    volumes:
+      - ./data/cache:/data/cache
+      - ./data/db:/data
+      - ./configs/artesian.example.yaml:/etc/artesian/artesian.yaml:ro
+    environment:
+      - TZ=UTC
