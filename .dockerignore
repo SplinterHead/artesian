@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.db
+*.db-journal
+test_artesian.db
+web/node_modules
+web/dist
+.DS_Store

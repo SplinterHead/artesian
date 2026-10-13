@@ -1,0 +1,72 @@
+# Artesian Unified Game Content Cache Configuration
+
+server:
+  listen_addr: ":8080"
+  enable_auth: false
+  api_key: ""
+
+dns:
+  enabled: true
+  listen_addr: ":53"
+  upstream_dns:
+    - "1.1.1.1:53"
+    - "8.8.8.8:53"
+  # Target IP of this Artesian machine where clients will connect for intercepted traffic
+  intercept_ipv4: "192.168.1.100"
+  intercept_ipv6: ""
+
+proxy:
+  listen_addr: ":80"
+  read_timeout: "60s"
+  write_timeout: "60s"
+  max_conns_per_host: 100
+
+cache:
+  storage_dir: "/data/cache"
+  max_size_bytes: 2199023255552 # 2 TB
+  min_free_disk_bytes: 53687091200 # 50 GB
+  chunk_size_bytes: 1048576 # 1 MB
+
+database:
+  path: "/data/artesian.db"
+
+services:
+  steam:
+    enabled: true
+    domains:
+      - "*.cs.steampowered.com"
+      - "*.content.steampowered.com"
+      - "*.hsar.steampowered.com"
+      - "content*.steampowered.com"
+      - "*.steamcontent.com"
+    auto_update: true
+    prefill_hours: 4
+
+  epicgames:
+    enabled: true
+    domains:
+      - "*.download.epicgames.com"
+      - "*.ol.epicgames.com"
+    auto_update: true
+    prefill_hours: 6
+
+  blizzard:
+    enabled: false
+    domains:
+      - "*.dist.blizzard.com"
+      - "*.cdn.blizzard.com"
+    auto_update: false
+    prefill_hours: 12
+
+  riot:
+    enabled: false
+    domains:
+      - "*.dyn.riotcdn.net"
+      - "*.content.riotgames.com"
+    auto_update: false
+    prefill_hours: 12
+
+scheduler:
+  enabled: true
+  update_cron: "0 */4 * * *" # Every 4 hours
+  cache_sync_cron: "0 3 * * *" # Daily at 3 AM

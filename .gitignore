@@ -1,0 +1,21 @@
+# Compiled root binaries
+/artesian
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Runtime data and cache storage
+/data/
+*.db
+*.db-journal
+test_artesian.db
+
+# Node dependencies
+web/node_modules/
+.npm/
+
+# OS metadata
+.DS_Store
+Thumbs.db
