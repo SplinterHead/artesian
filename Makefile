@@ -64,6 +64,7 @@ clean-data: ## Wipe all local cached game content and database state
 	rm -rf ./data/cache ./data/db ./data/*.db*
 	mkdir -p ./data/cache ./data/db
 	@echo "All local data successfully cleaned."
+	sleep 2
 
 wipe-data: clean-data ## Alias for clean-data
 
