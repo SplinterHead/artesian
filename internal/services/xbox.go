@@ -25,7 +25,7 @@ func (s *XboxService) MatchesHost(host string) bool {
 	host = strings.ToLower(host)
 	for _, p := range s.domains {
 		if strings.HasPrefix(p, "*.") {
-			if strings.HasSuffix(host, strings.TrimPrefix(p, "*")) {
+			if strings.HasSuffix(host, strings.TrimPrefix(p, "*")) || host == strings.TrimPrefix(p, "*.") {
 				return true
 			}
 		} else if host == p {

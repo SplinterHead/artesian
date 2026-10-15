@@ -39,7 +39,7 @@ func (s *SteamService) MatchesHost(host string) bool {
 	for _, pattern := range s.domains {
 		if strings.HasPrefix(pattern, "*.") {
 			suffix := strings.TrimPrefix(pattern, "*")
-			if strings.HasSuffix(host, suffix) {
+			if strings.HasSuffix(host, suffix) || host == strings.TrimPrefix(pattern, "*.") {
 				return true
 			}
 		} else if strings.HasPrefix(pattern, "content*.") {
