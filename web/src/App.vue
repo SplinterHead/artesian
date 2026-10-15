@@ -24,9 +24,13 @@
       <LibraryView 
         v-if="currentTab === 'library'" 
         :library="library" 
+        :cached-games="cachedGames"
         :active-prefill-job="activePrefillJob" 
         @open-add-game="showAddGameModal = true"
         @trigger-prefill="triggerPrefill"
+        @add-to-library="handleAddCachedGame"
+        @remove-from-library="handleRemoveFromLibrary"
+        @refresh-cached="fetchCachedGames"
       />
 
       <UpdatesView 
@@ -158,6 +162,7 @@ const loggingIn = ref(false);
 
 // Library & Prefill State
 const library = ref([]);
+const cachedGames = ref([]);
 const activePrefillJob = ref(null);
 const showAddGameModal = ref(false);
 
@@ -279,6 +284,37 @@ async function fetchLibrary() {
   } catch (e) {}
 }
 
+async function fetchCachedGames() {
+  try {
+    cachedGames.value = await api.getCachedGames();
+  } catch (e) {}
+}
+
+async function handleAddCachedGame(game) {
+  try {
+    await api.addGame({
+      appId: game.app_id,
+      name: game.name,
+      service: game.service || 'steam',
+      autoUpdate: true,
+    });
+    await fetchLibrary();
+    await fetchCachedGames();
+  } catch (e) {
+    console.error('Failed to add cached game to library:', e);
+  }
+}
+
+async function handleRemoveFromLibrary(game) {
+  try {
+    await api.removeGame(game.app_id, game.service || 'steam');
+    await fetchLibrary();
+    await fetchCachedGames();
+  } catch (e) {
+    console.error('Failed to remove game from library:', e);
+  }
+}
+
 async function fetchScheduler() {
   try {
     const data = await api.getSchedulerRules();
@@ -371,6 +407,7 @@ async function saveNewGame({ appId, name }) {
   await api.addGame({ appId, name, autoUpdate: true });
   showAddGameModal.value = false;
   fetchLibrary();
+  fetchCachedGames();
 }
 
 onMounted(() => {
@@ -378,6 +415,7 @@ onMounted(() => {
   fetchStats();
   fetchSteamStatus();
   fetchLibrary();
+  fetchCachedGames();
   fetchScheduler();
   fetchConfig();
   setInterval(fetchStats, 3000);

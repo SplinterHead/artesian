@@ -58,14 +58,23 @@ export const api = {
   async getLibrary() {
     return request('/api/v1/library');
   },
-  async addGame({ appId, name, autoUpdate = true }) {
+  async getCachedGames() {
+    return request('/api/v1/library/cached');
+  },
+  async addGame({ appId, name, service = 'steam', autoUpdate = true }) {
     return request('/api/v1/library', {
       method: 'POST',
       body: JSON.stringify({
         app_id: appId,
+        service,
         name,
         auto_update: autoUpdate,
       }),
+    });
+  },
+  async removeGame(appId, service = 'steam') {
+    return request(`/api/v1/library?app_id=${appId}&service=${service}`, {
+      method: 'DELETE',
     });
   },
   async startPrefill({ appId, name, service = 'steam' }) {

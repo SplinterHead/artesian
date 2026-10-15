@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Phase 4: Library & Prefill Engine Endpoints
 	mux.HandleFunc("/api/v1/library", s.handleLibrary)
+	mux.HandleFunc("/api/v1/library/cached", s.handleCachedLibrary)
 	mux.HandleFunc("/api/v1/prefill/jobs", s.handlePrefillJobs)
 	mux.HandleFunc("/api/v1/prefill/start", s.handlePrefillStart)
 
@@ -757,6 +758,7 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			AppID      int64  `json:"app_id"`
+			Service    string `json:"service"`
 			Name       string `json:"name"`
 			AutoUpdate bool   `json:"auto_update"`
 		}
@@ -764,18 +766,50 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
+		if req.Service == "" {
+			req.Service = "steam"
+		}
 		app := db.WatchedApp{
 			AppID:      req.AppID,
-			Service:    "steam",
+			Service:    req.Service,
 			Name:       req.Name,
 			AutoUpdate: req.AutoUpdate,
 			Status:     "synced",
 		}
 		_ = s.db.UpsertWatchedApp(app)
 		writeJSON(w, http.StatusCreated, app)
+	case http.MethodDelete:
+		appIDStr := r.URL.Query().Get("app_id")
+		service := r.URL.Query().Get("service")
+		if service == "" {
+			service = "steam"
+		}
+		appID, _ := strconv.ParseInt(appIDStr, 10, 64)
+		if appID > 0 {
+			_ = s.db.DeleteWatchedApp(appID, service)
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message": "Game removed from library",
+		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleCachedLibrary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	games, err := s.db.GetInterceptedGames()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if games == nil {
+		games = []db.InterceptedGame{}
+	}
+	writeJSON(w, http.StatusOK, games)
 }
 
 // Phase 4: Prefill Handlers
