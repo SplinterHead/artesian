@@ -245,6 +245,11 @@ func buildSyntheticAResponse(query []byte, ip net.IP) []byte {
 	// ANCOUNT = 1
 	resp[6] = 0x00
 	resp[7] = 0x01
+	// NSCOUNT = 0, ARCOUNT = 0 (clear authority and any query EDNS0 options)
+	resp[8] = 0x00
+	resp[9] = 0x00
+	resp[10] = 0x00
+	resp[11] = 0x00
 
 	// Answer Resource Record:
 	// Pointer to question name (0xc00c)
