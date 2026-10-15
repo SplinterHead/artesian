@@ -18,3 +18,7 @@ services:
       - ./configs/artesian.example.yaml:/etc/artesian/artesian.yaml:ro
     environment:
       - TZ=UTC
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
