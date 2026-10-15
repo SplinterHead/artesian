@@ -94,7 +94,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	}
 
 	// 7. Launch HTTP Caching Reverse Proxy Engine
-	proxyServer := proxy.NewServer(cfg.Proxy, storage, database, registry)
+	proxyServer := proxy.NewServer(cfg.Proxy, cfg.DNS, storage, database, registry)
 	go func() {
 		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[Artesian Proxy] Fatal error: %v", err)
@@ -103,7 +103,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	defer proxyServer.Close()
 
 	// 8. Launch Web Management UI & REST API
-	apiServer := api.NewServer(cfg.Server, &cfg.DNS, storage, database, registry, prefillMgr, sched)
+	apiServer := api.NewServer(cfg.Server, &cfg.DNS, storage, database, registry, prefillMgr, sched, proxyServer)
 	webHTTP := &http.Server{
 		Addr:         cfg.Server.ListenAddr,
 		Handler:      apiServer.Handler(),
