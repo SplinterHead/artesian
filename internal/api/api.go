@@ -742,17 +742,8 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// If empty, return standard popular games
-		if len(apps) == 0 {
-			apps = []db.WatchedApp{
-				{AppID: 730, Name: "Counter-Strike 2", Service: "steam", AutoUpdate: true, Status: "synced"},
-				{AppID: 570, Name: "Dota 2", Service: "steam", AutoUpdate: true, Status: "synced"},
-				{AppID: 440, Name: "Team Fortress 2", Service: "steam", AutoUpdate: true, Status: "synced"},
-				{AppID: 1091500, Name: "Cyberpunk 2077", Service: "steam", AutoUpdate: true, Status: "synced"},
-			}
-			for _, a := range apps {
-				_ = s.db.UpsertWatchedApp(a)
-			}
+		if apps == nil {
+			apps = []db.WatchedApp{}
 		}
 		writeJSON(w, http.StatusOK, apps)
 	case http.MethodPost:

@@ -138,9 +138,13 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 				Status string `json:"status"`
 				Data   map[string]struct {
 					Common struct {
-						Name string `json:"name"`
-						Type string `json:"type"`
+						Name   string `json:"name"`
+						Type   string `json:"type"`
+						Parent string `json:"parent"`
 					} `json:"common"`
+					Extended struct {
+						DlcForAppId string `json:"dlcforappid"`
+					} `json:"extended"`
 					Depots map[string]json.RawMessage `json:"depots"`
 				} `json:"data"`
 			}
@@ -222,6 +226,121 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 						}
 					}
 
+					// If the depot was not defined directly in this app (e.g. DLC depot defined in parent base game), check parent
+					if matchedInfo == nil {
+						var parentAppID int64
+						if appData.Common.Parent != "" {
+							parentAppID, _ = strconv.ParseInt(appData.Common.Parent, 10, 64)
+						}
+						if parentAppID <= 0 && appData.Extended.DlcForAppId != "" {
+							parentAppID, _ = strconv.ParseInt(appData.Extended.DlcForAppId, 10, 64)
+						}
+
+						if parentAppID > 0 {
+							parentURL := fmt.Sprintf("https://api.steamcmd.net/v1/info/%d", parentAppID)
+							pReq, pErr := http.NewRequest("GET", parentURL, nil)
+							if pErr == nil {
+								pReq.Header.Set("User-Agent", "Artesian/1.0 (Game Cache Proxy)")
+								pResp, pErr := client.Do(pReq)
+								if pErr == nil && pResp.StatusCode == http.StatusOK {
+									defer pResp.Body.Close()
+									var parentCmdData struct {
+										Data map[string]struct {
+											Common struct {
+												Name string `json:"name"`
+											} `json:"common"`
+											Depots map[string]json.RawMessage `json:"depots"`
+										} `json:"data"`
+									}
+									if err := json.NewDecoder(pResp.Body).Decode(&parentCmdData); err == nil {
+										pKey := fmt.Sprintf("%d", parentAppID)
+										if pData, ok := parentCmdData.Data[pKey]; ok {
+											for dKey, dRaw := range pData.Depots {
+												dID, err := strconv.ParseInt(dKey, 10, 64)
+												if err != nil {
+													continue
+												}
+
+												var dVal struct {
+													Config struct {
+														Oslist string `json:"oslist"`
+														Osarch string `json:"osarch"`
+													} `json:"config"`
+													DlcAppID string `json:"dlcappid"`
+													Manifests map[string]struct {
+														Download string `json:"download"`
+														Size     string `json:"size"`
+													} `json:"manifests"`
+												}
+												if err := json.Unmarshal(dRaw, &dVal); err != nil {
+													continue
+												}
+
+												depotAppID := parentAppID
+												depotTitle := pData.Common.Name
+												if dVal.DlcAppID != "" {
+													if parsedDlc, err := strconv.ParseInt(dVal.DlcAppID, 10, 64); err == nil {
+														depotAppID = parsedDlc
+														if parsedDlc == baseAppID {
+															depotTitle = gameTitle
+														}
+													}
+												}
+
+												platform := FormatPlatform(dVal.Config.Oslist, dVal.Config.Osarch, userAgent)
+												var totalSize int64
+												if pub, ok := dVal.Manifests["public"]; ok {
+													if sz, err := strconv.ParseInt(pub.Download, 10, 64); err == nil && sz > 0 {
+														totalSize = sz
+													} else if sz, err := strconv.ParseInt(pub.Size, 10, 64); err == nil {
+														totalSize = sz
+													}
+												}
+												if totalSize == 0 {
+													for _, m := range dVal.Manifests {
+														if sz, err := strconv.ParseInt(m.Download, 10, 64); err == nil && sz > 0 {
+															totalSize = sz
+															break
+														} else if sz, err := strconv.ParseInt(m.Size, 10, 64); err == nil && sz > 0 {
+															totalSize = sz
+															break
+														}
+													}
+												}
+
+												info := &DepotInfo{
+													GameTitle: depotTitle,
+													AppID:     depotAppID,
+													Platform:  platform,
+													TotalSize: totalSize,
+												}
+
+												depotInfoCacheMu.Lock()
+												depotInfoCache[dID] = info
+												depotInfoCacheMu.Unlock()
+
+												if database != nil {
+													_ = database.UpsertDepotMeta(db.DepotMeta{
+														DepotID:   dID,
+														AppID:     depotAppID,
+														Service:   "steam",
+														GameTitle: depotTitle,
+														Platform:  platform,
+														TotalSize: totalSize,
+													})
+												}
+
+												if dID == depotID {
+													matchedInfo = info
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+
 					if matchedInfo != nil {
 						return matchedInfo, nil
 					}
@@ -265,7 +384,7 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 				if platform == "PC" {
 					if entry.Data.Platforms.Mac && !entry.Data.Platforms.Windows {
 						platform = "Mac 64bit"
-					} else if entry.Data.Platforms.Windows {
+					} else if entry.Data.Platforms.Windows && !entry.Data.Platforms.Mac && !entry.Data.Platforms.Linux {
 						platform = "Windows"
 					}
 				}
@@ -330,22 +449,9 @@ func ResolveSteamDepot(database *db.DB, depotID int64, userAgent string) DepotIn
 	cached, found := depotInfoCache[depotID]
 	depotInfoCacheMu.RUnlock()
 	if found && cached != nil {
-		if (cached.Platform == "PC" || cached.Platform == "") && userAgent != "" {
-			newPlat := FormatPlatform("", "", userAgent)
-			if newPlat != "PC" {
-				depotInfoCacheMu.Lock()
-				cached.Platform = newPlat
-				depotInfoCacheMu.Unlock()
-				if database != nil {
-					_ = database.UpsertDepotMeta(db.DepotMeta{
-						DepotID:   depotID,
-						AppID:     cached.AppID,
-						Service:   "steam",
-						GameTitle: cached.GameTitle,
-						Platform:  newPlat,
-						TotalSize: cached.TotalSize,
-					})
-				}
+		if (cached.Platform == "PC" || cached.Platform == "") {
+			if fresh, err := FetchRemoteSteamDepotInfo(database, depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
+				return *fresh
 			}
 		}
 		triggerBackgroundDoubleCheck(database, depotID, userAgent)
@@ -356,18 +462,9 @@ func ResolveSteamDepot(database *db.DB, depotID int64, userAgent string) DepotIn
 	if database != nil {
 		if meta, err := database.GetDepotMeta(depotID); err == nil && meta != nil && meta.GameTitle != "" {
 			platform := meta.Platform
-			if (platform == "PC" || platform == "") && userAgent != "" {
-				newPlat := FormatPlatform("", "", userAgent)
-				if newPlat != "PC" {
-					platform = newPlat
-					_ = database.UpsertDepotMeta(db.DepotMeta{
-						DepotID:   meta.DepotID,
-						AppID:     meta.AppID,
-						Service:   meta.Service,
-						GameTitle: meta.GameTitle,
-						Platform:  newPlat,
-						TotalSize: meta.TotalSize,
-					})
+			if platform == "PC" || platform == "" {
+				if fresh, err := FetchRemoteSteamDepotInfo(database, depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
+					return *fresh
 				}
 			}
 
