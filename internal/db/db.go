@@ -3,11 +3,13 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
 
 // DB wraps standard sql.DB with Artesian helper methods
 type DB struct {
@@ -37,6 +39,17 @@ type ChunkEntry struct {
 	DownloadedAt time.Time `json:"downloaded_at"`
 	FilePath     string    `json:"file_path"`
 	HitCount     int64     `json:"hit_count"`
+}
+
+// DepotMeta caches dynamic lookup metadata for a specific depot
+type DepotMeta struct {
+	DepotID     int64     `json:"depot_id"`
+	AppID       int64     `json:"app_id"`
+	Service     string    `json:"service"`
+	GameTitle   string    `json:"game_title"`
+	Platform    string    `json:"platform"`
+	TotalSize   int64     `json:"total_size"`
+	LastUpdated time.Time `json:"last_updated"`
 }
 
 // SteamSession represents authenticated Steam credentials
@@ -78,6 +91,13 @@ func Open(path string) (*DB, error) {
 }
 
 func (db *DB) migrate() error {
+	pragmas := `
+	PRAGMA journal_mode = WAL;
+	PRAGMA synchronous = NORMAL;
+	PRAGMA busy_timeout = 5000;
+	`
+	_, _ = db.Exec(pragmas)
+
 	schema := `
 	CREATE TABLE IF NOT EXISTS config_settings (
 		key TEXT PRIMARY KEY,
@@ -143,6 +163,25 @@ func (db *DB) migrate() error {
 		enabled BOOLEAN DEFAULT 1,
 		last_run DATETIME,
 		next_run DATETIME
+	);
+
+	CREATE TABLE IF NOT EXISTS depot_meta_cache (
+		depot_id INTEGER PRIMARY KEY,
+		app_id INTEGER NOT NULL,
+		service TEXT NOT NULL DEFAULT 'steam',
+		game_title TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		total_size INTEGER DEFAULT 0,
+		last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS game_meta_cache (
+		id TEXT PRIMARY KEY,
+		service TEXT NOT NULL,
+		app_id INTEGER DEFAULT 0,
+		name TEXT NOT NULL,
+		platform TEXT DEFAULT 'PC',
+		last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	`
 	_, err := db.Exec(schema)
@@ -337,3 +376,117 @@ func (db *DB) GetStats() (StatSummary, error) {
 	}
 	return stats, nil
 }
+
+// RequestLog represents a logged proxy request entry
+type RequestLog struct {
+	ID               int64     `json:"id"`
+	ClientIP         string    `json:"client_ip"`
+	Host             string    `json:"host"`
+	Method           string    `json:"method"`
+	Path             string    `json:"path"`
+	Status           int       `json:"status"`
+	IsHit            bool      `json:"is_hit"`
+	BytesTransferred int64     `json:"bytes_transferred"`
+	DurationMs       int64     `json:"duration_ms"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// GetRecentRequestLogs returns the most recent request logs from SQLite
+func (db *DB) GetRecentRequestLogs(limit int) ([]RequestLog, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.Query(`
+		SELECT id, client_ip, host, method, path, status, is_hit, bytes_transferred, duration_ms, created_at
+		FROM request_logs
+		ORDER BY id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []RequestLog
+	for rows.Next() {
+		var l RequestLog
+		var createdAtStr string
+		if err := rows.Scan(&l.ID, &l.ClientIP, &l.Host, &l.Method, &l.Path, &l.Status, &l.IsHit, &l.BytesTransferred, &l.DurationMs, &createdAtStr); err != nil {
+			log.Printf("[Artesian DB] GetRecentRequestLogs scan error: %v", err)
+			continue
+		}
+		t, parseErr := time.Parse("2006-01-02 15:04:05", createdAtStr)
+		if parseErr != nil {
+			t, _ = time.Parse(time.RFC3339, createdAtStr)
+		}
+		l.CreatedAt = t
+		logs = append(logs, l)
+	}
+	return logs, nil
+}
+
+// GetDepotMeta retrieves cached depot metadata from SQLite
+func (db *DB) GetDepotMeta(depotID int64) (*DepotMeta, error) {
+	if db == nil || depotID <= 0 {
+		return nil, sql.ErrNoRows
+	}
+	var d DepotMeta
+	var lu string
+	err := db.QueryRow(`
+		SELECT depot_id, app_id, service, game_title, platform, total_size, last_updated 
+		FROM depot_meta_cache WHERE depot_id = ?
+	`, depotID).Scan(&d.DepotID, &d.AppID, &d.Service, &d.GameTitle, &d.Platform, &d.TotalSize, &lu)
+	if err != nil {
+		return nil, err
+	}
+	d.LastUpdated, _ = time.Parse("2006-01-02 15:04:05", lu)
+	return &d, nil
+}
+
+// UpsertDepotMeta stores or refreshes cached depot metadata in SQLite
+func (db *DB) UpsertDepotMeta(meta DepotMeta) error {
+	if db == nil || meta.DepotID <= 0 {
+		return nil
+	}
+	query := `
+		INSERT INTO depot_meta_cache (depot_id, app_id, service, game_title, platform, total_size, last_updated)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(depot_id) DO UPDATE SET
+			app_id = excluded.app_id,
+			service = excluded.service,
+			game_title = excluded.game_title,
+			platform = excluded.platform,
+			total_size = excluded.total_size,
+			last_updated = CURRENT_TIMESTAMP;
+	`
+	_, err := db.Exec(query, meta.DepotID, meta.AppID, meta.Service, meta.GameTitle, meta.Platform, meta.TotalSize)
+	return err
+}
+
+// GetGameMeta retrieves cached game metadata by ID
+func (db *DB) GetGameMeta(id string) (name, platform string, err error) {
+	if db == nil || id == "" {
+		return "", "", sql.ErrNoRows
+	}
+	err = db.QueryRow("SELECT name, platform FROM game_meta_cache WHERE id = ?", id).Scan(&name, &platform)
+	return name, platform, err
+}
+
+// UpsertGameMeta caches game metadata in SQLite
+func (db *DB) UpsertGameMeta(id, service string, appID int64, name, platform string) error {
+	if db == nil || id == "" {
+		return nil
+	}
+	query := `
+		INSERT INTO game_meta_cache (id, service, app_id, name, platform, last_updated)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			platform = excluded.platform,
+			last_updated = CURRENT_TIMESTAMP;
+	`
+	_, err := db.Exec(query, id, service, appID, name, platform)
+	return err
+}
+
+
