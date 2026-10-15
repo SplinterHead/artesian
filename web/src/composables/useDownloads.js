@@ -42,6 +42,10 @@ export function useDownloads() {
       sess.bytes_transferred = Math.max(sess.bytes_transferred || 0, existing.bytes_transferred || 0);
       sess.total_depot_size = Math.max(sess.total_depot_size || 0, existing.total_depot_size || 0);
 
+      if (existing.platform && existing.platform !== 'PC' && (!sess.platform || sess.platform === 'PC')) {
+        sess.platform = existing.platform;
+      }
+
       activeDownloads.value.splice(idx, 1);
     }
     activeDownloads.value.unshift(sess);
@@ -81,6 +85,9 @@ export function useDownloads() {
       }
       if (s.game_title && s.game_title.startsWith('Steam App ') && evt.game_title && !evt.game_title.startsWith('Steam App ')) {
         s.game_title = evt.game_title;
+      }
+      if (evt.platform && evt.platform !== 'PC' && (s.platform === 'PC' || !s.platform)) {
+        s.platform = evt.platform;
       }
 
       if (idx > 0) {

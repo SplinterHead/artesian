@@ -74,7 +74,7 @@ type StatSummary struct {
 	WriteBytesSec int64   `json:"write_bytes_sec"`
 }
 
-// Open initializes and migrates the SQLite database
+// Open initializes the SQLite database and sets up clean initial schema
 func Open(path string) (*DB, error) {
 	sqlDB, err := sql.Open("sqlite3", path)
 	if err != nil {
@@ -82,17 +82,17 @@ func Open(path string) (*DB, error) {
 	}
 
 	db := &DB{sqlDB}
-	if err := db.migrate(); err != nil {
+	if err := db.initSchema(); err != nil {
 		_ = sqlDB.Close()
-		return nil, fmt.Errorf("database migration failed: %w", err)
+		return nil, fmt.Errorf("database schema initialization failed: %w", err)
 	}
 
 	return db, nil
 }
 
-func (db *DB) migrate() error {
+func (db *DB) initSchema() error {
 	pragmas := `
-	PRAGMA journal_mode = WAL;
+	PRAGMA journal_mode = DELETE;
 	PRAGMA synchronous = NORMAL;
 	PRAGMA busy_timeout = 5000;
 	`
@@ -123,13 +123,14 @@ func (db *DB) migrate() error {
 		service TEXT NOT NULL DEFAULT 'steam',
 		depot_id INTEGER DEFAULT 0,
 		app_id INTEGER DEFAULT 0,
-		size_bytes INTEGER,
+		size_bytes INTEGER DEFAULT 0,
 		downloaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		file_path TEXT NOT NULL,
 		hit_count INTEGER DEFAULT 0
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_chunk_depot ON chunk_cache(service, depot_id);
+	CREATE INDEX IF NOT EXISTS idx_chunk_app ON chunk_cache(service, app_id);
 
 	CREATE TABLE IF NOT EXISTS steam_session (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -154,6 +155,8 @@ func (db *DB) migrate() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE INDEX IF NOT EXISTS idx_logs_created ON request_logs(created_at);
+
 	CREATE TABLE IF NOT EXISTS scheduler_rules (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -174,6 +177,8 @@ func (db *DB) migrate() error {
 		total_size INTEGER DEFAULT 0,
 		last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_depot_app ON depot_meta_cache(service, app_id);
 
 	CREATE TABLE IF NOT EXISTS game_meta_cache (
 		id TEXT PRIMARY KEY,
@@ -396,6 +401,7 @@ func (db *DB) GetInterceptedGames() ([]InterceptedGame, error) {
 	WHERE d.app_id > 0
 	  AND d.app_id NOT IN (SELECT app_id FROM watched_apps WHERE service = d.service)
 	GROUP BY d.app_id, d.service
+	HAVING COUNT(c.chunk_id) > 0
 	ORDER BY last_seen DESC;
 	`
 
@@ -431,6 +437,7 @@ func (db *DB) GetInterceptedGames() ([]InterceptedGame, error) {
 	LEFT JOIN chunk_cache c ON c.service = g.service
 	WHERE g.name NOT IN (SELECT name FROM watched_apps WHERE service = g.service)
 	GROUP BY g.id, g.service
+	HAVING COUNT(c.chunk_id) > 0
 	ORDER BY last_seen DESC;
 	`
 	epicRows, err := db.Query(epicQuery)
