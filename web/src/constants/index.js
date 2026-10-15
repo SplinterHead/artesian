@@ -1,0 +1,68 @@
+// Navigation Tabs Configuration
+export const NAV_TABS = [
+  { id: 'dashboard', label: 'Stats', icon: 'fa-regular fa-chart-bar' },
+  { id: 'library', label: 'Library', icon: 'fa-regular fa-folder-open' },
+  { id: 'automation', label: 'Updates', icon: 'fa-regular fa-clock' },
+  { id: 'config', label: 'Settings', icon: 'fa-solid fa-gear' },
+  { id: 'services', label: 'Accounts', icon: 'fa-regular fa-circle-user' },
+];
+
+// Initial default services definition
+export const DEFAULT_SERVICES = [
+  {
+    id: 'steam',
+    display_name: 'Steam',
+    company: 'Valve',
+    status: 'disconnected',
+    intercept_enabled: true,
+    auth_supported: true,
+    prefill_supported: true,
+    username: '',
+    domains: ['*.cs.steampowered.com', '*.content.steampowered.com', '*.steamcontent.com'],
+    description: 'Depot manifest decryption, PICS change polling, and high-throughput chunk caching.',
+  },
+  {
+    id: 'epic',
+    display_name: 'Epic Games Store',
+    company: 'Epic Games',
+    status: 'ready',
+    intercept_enabled: true,
+    auth_supported: false,
+    prefill_supported: false,
+    domains: ['*.download.epicgames.com', '*.ol.epicgames.com'],
+    description: 'Chunked binary manifest (.manifest) and hash-addressed .chunk pass-through caching.',
+  },
+  {
+    id: 'blizzard',
+    display_name: 'Battle.net',
+    company: 'Blizzard Entertainment',
+    status: 'ready',
+    intercept_enabled: true,
+    auth_supported: false,
+    prefill_supported: false,
+    domains: ['*.dist.blizzard.com', '*.cdn.blizzard.com'],
+    description: 'Battle.net TACT archive format and CDN edge server interception.',
+  },
+  {
+    id: 'riot',
+    display_name: 'Riot Games',
+    company: 'Riot Games',
+    status: 'ready',
+    intercept_enabled: true,
+    auth_supported: false,
+    prefill_supported: false,
+    domains: ['*.dyn.riotcdn.net', '*.content.riotgames.com'],
+    description: 'Valorant & League of Legends RMAN release manifests and client asset caching.',
+  },
+  {
+    id: 'xbox',
+    display_name: 'Xbox / Windows Store',
+    company: 'Microsoft',
+    status: 'ready',
+    intercept_enabled: true,
+    auth_supported: false,
+    prefill_supported: false,
+    domains: ['*.assets1.xboxlive.com', '*.delivery.mp.microsoft.com'],
+    description: 'Delivery Optimization range-request caching for Xbox game downloads.',
+  },
+];

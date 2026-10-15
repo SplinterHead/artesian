@@ -32,8 +32,6 @@
       <div class="card-header">
         <h3>Active Downloads</h3>
         <div class="header-actions">
-          <span class="live-pulse"></span>
-          <span class="text-muted text-sm">{{ liveTraffic.length }} requests logged</span>
           <button class="btn btn-xs btn-secondary" @click="$emit('clear-traffic')">Clear</button>
         </div>
       </div>
@@ -42,35 +40,121 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>Timestamp</th>
-              <th>Client IP</th>
-              <th>Method</th>
-              <th>Host</th>
-              <th>Request URI / Chunk</th>
-              <th>Transfer Size</th>
-              <th>Cache State</th>
-              <th>Latency</th>
+              <th></th>
+              <th>Client</th>
+              <th>Store</th>
+              <th>Game Title</th>
+              <th>Depot ID</th>
+              <th>Size</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="liveTraffic.length === 0">
-              <td colspan="8" class="empty-cell">
-                Listening on :80. Traffic from game clients will stream here in real time...
+            <tr v-if="activeDownloads.length === 0">
+              <td colspan="6" class="empty-cell">
+                Listening on :80. Traffic from game clients will bundle here in real time...
               </td>
             </tr>
-            <tr v-for="(t, idx) in liveTraffic" :key="idx" class="traffic-row">
-              <td class="text-muted"><code>{{ t.time }}</code></td>
-              <td><code>{{ t.client_ip }}</code></td>
-              <td><span class="method-tag">{{ t.method }}</span></td>
-              <td><strong>{{ t.host }}</strong></td>
-              <td class="uri-cell" :title="t.url"><code>{{ t.url }}</code></td>
-              <td>{{ formatBytes(t.bytes_transferred) }}</td>
+            <tr v-for="d in activeDownloads" :key="d.key || (d.client_ip + d.store + d.game_title)" class="traffic-row">
+              <td class="text-muted"><code>{{ d.timestamp || d.time }}</code></td>
+              <td><code class="ip-code">{{ cleanClientIP(d.client_ip) }}</code></td>
               <td>
-                <span :class="['cache-badge', t.is_hit ? 'badge-hit' : 'badge-miss']">
-                  {{ t.is_hit ? 'HIT' : 'MISS' }}
-                </span>
+                <div 
+                  class="store-logo-box" 
+                  :class="'store-logo-' + (getLogoKey(d.service, d.store) || 'generic')"
+                  :title="d.store || formatStore(d.service)"
+                >
+                  <svg 
+                    v-if="platformLogos[getLogoKey(d.service, d.store)]" 
+                    class="store-svg-logo" 
+                    :viewBox="platformLogos[getLogoKey(d.service, d.store)].viewBox" 
+                    fill="currentColor"
+                  >
+                    <path :d="platformLogos[getLogoKey(d.service, d.store)].path" />
+                  </svg>
+                  <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
+                </div>
               </td>
-              <td class="text-muted">{{ t.duration_ms }}ms</td>
+              <td>
+                <div class="game-cell">
+                  <strong class="game-title">{{ d.game_title || 'Game Asset' }}</strong>
+                  <span class="platform-tag" :title="d.platform || 'PC'">
+                    <i :class="getPlatformIcon(d.platform)"></i>
+                  </span>
+                </div>
+              </td>
+              <td>
+                <div class="depots-container">
+                  <!-- Steam Depots: All depots for this game bundled as clickable badges -->
+                  <template v-if="d.service === 'steam'">
+                    <template v-if="d.depot_links && d.depot_links.length > 0">
+                      <a 
+                        v-for="link in d.depot_links" 
+                        :key="link.depot_id"
+                        :href="link.lookup_url || ('https://steamdb.info/depot/' + link.depot_id)" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        class="depot-link steamdb-link"
+                        :title="'View Depot ' + link.depot_id + ' on SteamDB'"
+                      >
+                        <code>{{ link.depot_id }}</code>
+                        <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
+                      </a>
+                    </template>
+                    <a 
+                      v-else-if="d.depot_id" 
+                      :href="d.lookup_url || ('https://steamdb.info/depot/' + d.depot_id)" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      class="depot-link steamdb-link"
+                      :title="'View Depot ' + d.depot_id + ' on SteamDB'"
+                    >
+                      <code>{{ d.depot_id }}</code>
+                      <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
+                    </a>
+                    <span v-else class="text-muted">—</span>
+                  </template>
+
+                  <!-- Epic Games: Link to egdata.app -->
+                  <template v-else-if="d.service === 'epic'">
+                    <a 
+                      :href="d.lookup_url || 'https://egdata.app'" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      class="depot-link egdata-link"
+                      :title="'Look up chunk data on EGData (https://egdata.app)'"
+                    >
+                      <code>{{ formatChunkID(d.chunk_id) || 'egdata' }}</code>
+                      <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
+                    </a>
+                  </template>
+
+                  <!-- Generic / Other Stores -->
+                  <template v-else>
+                    <a 
+                      v-if="d.lookup_url" 
+                      :href="d.lookup_url" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      class="depot-link"
+                    >
+                      <code>{{ d.depot_id || formatChunkID(d.chunk_id) || 'asset' }}</code>
+                      <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
+                    </a>
+                    <code v-else-if="d.depot_id">{{ d.depot_id }}</code>
+                    <span v-else class="text-muted">—</span>
+                  </template>
+                </div>
+              </td>
+              <td>
+                <div class="size-cell">
+                  <span class="depot-size">
+                    {{ formatBytes(d.total_depot_size || d.bytes_transferred || 0) }}
+                  </span>
+                  <span v-if="d.chunk_count && d.chunk_count > 1" class="chunk-badge">
+                    {{ d.chunk_count }} files
+                  </span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -80,16 +164,29 @@
 </template>
 
 <script setup>
-import { formatBytes, formatSpeed } from '../utils/formatters';
+import { 
+  formatBytes, 
+  formatSpeed, 
+  cleanClientIP, 
+  formatChunkID, 
+  formatStore, 
+  getLogoKey, 
+  getPlatformIcon 
+} from '../utils/formatters';
+import { platformLogos } from '../utils/logos';
 
 defineProps({
   stats: {
     type: Object,
     required: true,
   },
-  liveTraffic: {
+  activeDownloads: {
     type: Array,
     required: true,
+  },
+  totalFilesLogged: {
+    type: Number,
+    default: 0,
   },
 });
 
@@ -136,26 +233,196 @@ defineEmits(['clear-traffic']);
   background: rgba(255, 255, 255, 0.02);
 }
 
-.method-tag {
-  background: #0f172a;
+.ip-code {
+  color: #38bdf8;
+  font-weight: 500;
+}
+
+.store-logo-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: default;
+}
+
+.store-svg-logo {
+  width: 18px;
+  height: 18px;
+}
+
+.fallback-logo-icon {
+  font-size: 0.95rem;
+}
+
+.store-logo-steam {
+  background: radial-gradient(circle at top left, rgba(102, 192, 244, 0.25), rgba(23, 26, 38, 0.8));
+  color: #66c0f4;
+  border: 1px solid rgba(102, 192, 244, 0.35);
+  box-shadow: 0 2px 8px rgba(102, 192, 244, 0.15);
+}
+
+.store-logo-steam:hover {
+  border-color: rgba(102, 192, 244, 0.7);
+  box-shadow: 0 4px 14px rgba(102, 192, 244, 0.35);
+  color: #ffffff;
+}
+
+.store-logo-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(30, 30, 30, 0.8));
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.store-logo-epic:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.store-logo-blizzard {
+  background: radial-gradient(circle at top left, rgba(0, 174, 255, 0.25), rgba(15, 23, 42, 0.8));
+  color: #00aeff;
+  border: 1px solid rgba(0, 174, 255, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 174, 255, 0.15);
+}
+
+.store-logo-blizzard:hover {
+  border-color: rgba(0, 174, 255, 0.7);
+  box-shadow: 0 4px 14px rgba(0, 174, 255, 0.35);
+  color: #ffffff;
+}
+
+.store-logo-riot {
+  background: radial-gradient(circle at top left, rgba(235, 0, 41, 0.25), rgba(20, 10, 15, 0.8));
+  color: #eb0029;
+  border: 1px solid rgba(235, 0, 41, 0.35);
+  box-shadow: 0 2px 8px rgba(235, 0, 41, 0.15);
+}
+
+.store-logo-riot:hover {
+  border-color: rgba(235, 0, 41, 0.7);
+  box-shadow: 0 4px 14px rgba(235, 0, 41, 0.35);
+  color: #ff4d6d;
+}
+
+.store-logo-xbox {
+  background: radial-gradient(circle at top left, rgba(44, 162, 67, 0.25), rgba(10, 25, 15, 0.8));
+  color: #2ca243;
+  border: 1px solid rgba(44, 162, 67, 0.35);
+  box-shadow: 0 2px 8px rgba(44, 162, 67, 0.15);
+}
+
+.store-logo-xbox:hover {
+  border-color: rgba(44, 162, 67, 0.7);
+  box-shadow: 0 4px 14px rgba(44, 162, 67, 0.35);
+  color: #4ade80;
+}
+
+.store-logo-generic {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.game-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.game-title {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+
+.platform-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(15, 23, 42, 0.85);
   border: 1px solid var(--border);
-  padding: 2px 6px;
-  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  border-radius: 6px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: default;
+}
+
+.platform-tag:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(30, 41, 59, 0.95);
+  transform: translateY(-1px);
+}
+
+.depot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-decoration: none;
   font-weight: 600;
-  font-size: 0.75rem;
+  transition: color 0.15s ease;
 }
 
-.uri-cell {
-  max-width: 320px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.steamdb-link {
+  color: #38bdf8;
 }
 
-.cache-badge {
-  font-weight: 700;
-  font-size: 0.75rem;
-  padding: 2px 6px;
-  border-radius: 4px;
+.steamdb-link:hover {
+  color: #7dd3fc;
+  text-decoration: underline;
+}
+
+.egdata-link {
+  color: #c084fc;
+}
+
+.egdata-link:hover {
+  color: #e9d5ff;
+  text-decoration: underline;
+}
+
+.external-icon {
+  font-size: 0.65rem;
+  opacity: 0.75;
+}
+
+.depot-size {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.depots-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.size-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.chunk-badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
 }
 </style>
+
