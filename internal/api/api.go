@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,12 +15,14 @@ import (
 	"artesian/internal/config"
 	"artesian/internal/db"
 	"artesian/internal/prefill"
+	"artesian/internal/proxy"
 	"artesian/internal/scheduler"
 	"artesian/internal/services"
 	"artesian/internal/steam"
 	"artesian/internal/ws"
 	"artesian/web"
 )
+
 
 // Server coordinates HTTP endpoints and WebSocket streaming
 type Server struct {
@@ -29,6 +34,7 @@ type Server struct {
 	prefill   *prefill.Manager
 	scheduler *scheduler.Scheduler
 	steam     *steam.Client
+	proxy     *proxy.Server
 }
 
 // NewServer initializes the API server
@@ -40,6 +46,7 @@ func NewServer(
 	reg *services.Registry,
 	pf *prefill.Manager,
 	sched *scheduler.Scheduler,
+	p *proxy.Server,
 ) *Server {
 	return &Server{
 		cfg:       cfg,
@@ -50,6 +57,7 @@ func NewServer(
 		prefill:   pf,
 		scheduler: sched,
 		steam:     steam.GetClient(database),
+		proxy:     p,
 	}
 }
 
@@ -68,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Phase 1 & 2: Stats & Disk I/O Metrics
 	mux.HandleFunc("/api/v1/stats", s.handleStats)
+	mux.HandleFunc("/api/v1/traffic", s.handleTraffic)
 
 	// Game Services Hub Endpoints (Steam, Epic, Blizzard, Riot, Xbox)
 	mux.HandleFunc("/api/v1/services", s.handleServices)
@@ -218,6 +227,310 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"version": "1.0.0",
 	})
 }
+
+func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		if s.proxy != nil {
+			s.proxy.ClearActiveDownloads()
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message": "Active downloads cleared",
+		})
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 500 {
+			limit = l
+		}
+	}
+
+	var activeDownloads []*proxy.GameDownloadSession
+	if s.proxy != nil {
+		activeDownloads = s.proxy.GetActiveDownloads()
+	}
+
+	logs, err := s.db.GetRecentRequestLogs(limit)
+	if err != nil {
+		logs = []db.RequestLog{}
+	}
+
+	traffic := make([]map[string]interface{}, 0, len(logs))
+	for _, l := range logs {
+		svc := s.registry.Identify(l.Host)
+		if svc == nil {
+			continue
+		}
+		svcName := svc.Name()
+
+		var depotID int64
+		var chunkID string
+		var lookupURL string
+
+		if svcName == "steam" {
+			if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+			}
+			if depotID > 0 {
+				chunkID = fmt.Sprintf("%d", depotID)
+				lookupURL = fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
+			}
+		} else if svcName == "epic" {
+			if matches := proxy.EpicChunkRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				chunkID = matches[1]
+			}
+			var appName string
+			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				appName = matches[1]
+			}
+			if appName != "" {
+				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(appName))
+			} else if chunkID != "" {
+				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(chunkID))
+			} else {
+				lookupURL = "https://egdata.app"
+			}
+		}
+
+		var gameTitle string
+		var platform string
+		var totalSize int64 = l.BytesTransferred
+
+		if svcName == "steam" {
+			info := proxy.ResolveSteamDepot(s.db, depotID, "")
+			gameTitle = info.GameTitle
+			platform = info.Platform
+			if info.TotalSize > 0 {
+				totalSize = info.TotalSize
+			}
+		} else if svcName == "epic" {
+			var appName string
+			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				appName = matches[1]
+			}
+			gameTitle, platform = proxy.ResolveEpicGame(s.db, appName, "")
+		} else if svcName == "xbox" {
+			gameTitle = "Xbox Game Package"
+			platform = "Xbox / PC"
+		} else {
+			gameTitle = proxy.ResolveGameTitle(s.db, svcName, depotID, l.Path)
+			platform = proxy.FormatPlatform("", "", "")
+		}
+
+		ts := l.CreatedAt.Format("15:04:05")
+		if l.CreatedAt.IsZero() {
+			ts = time.Now().Format("15:04:05")
+		}
+
+		clientIP := l.ClientIP
+		if ip, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = ip
+		}
+		clientIP = strings.TrimPrefix(clientIP, "[")
+		clientIP = strings.TrimSuffix(clientIP, "]")
+
+		traffic = append(traffic, map[string]interface{}{
+			"timestamp":         ts,
+			"time":              ts,
+			"client_ip":         clientIP,
+			"host":              l.Host,
+			"method":            l.Method,
+			"url":               l.Path,
+			"bytes_transferred": l.BytesTransferred,
+			"is_hit":            l.IsHit,
+			"status":            l.Status,
+			"duration_ms":       l.DurationMs,
+			"service":           svcName,
+			"store":             proxy.FormatStoreName(svcName),
+			"game_title":        gameTitle,
+			"platform":          platform,
+			"depot_id":          depotID,
+			"chunk_id":          chunkID,
+			"lookup_url":        lookupURL,
+			"total_depot_size":  totalSize,
+		})
+	}
+
+	// activeDownloads contains ONLY downloads currently ongoing in the proxy engine
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"downloads": activeDownloads,
+		"traffic":   traffic,
+	})
+}
+
+func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownloadSession {
+	sessionsMap := make(map[string]*proxy.GameDownloadSession)
+
+	for _, l := range logs {
+		svc := s.registry.Identify(l.Host)
+		if svc == nil {
+			continue
+		}
+		svcName := svc.Name()
+
+		var depotID int64
+		var chunkID string
+		var lookupURL string
+
+		if svcName == "steam" {
+			if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+			}
+			if depotID > 0 {
+				chunkID = fmt.Sprintf("%d", depotID)
+				lookupURL = fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
+			}
+		} else if svcName == "epic" {
+			if matches := proxy.EpicChunkRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				chunkID = matches[1]
+			}
+			var appName string
+			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				appName = matches[1]
+			}
+			if appName != "" {
+				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(appName))
+			} else if chunkID != "" {
+				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(chunkID))
+			} else {
+				lookupURL = "https://egdata.app"
+			}
+		}
+
+		clientIP := l.ClientIP
+		if ip, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = ip
+		}
+		clientIP = strings.TrimPrefix(clientIP, "[")
+		clientIP = strings.TrimSuffix(clientIP, "]")
+
+		var gameTitle string
+		var platform string
+		var baseAppID int64
+
+		if svcName == "steam" {
+			info := proxy.ResolveSteamDepot(s.db, depotID, "")
+			gameTitle = info.GameTitle
+			platform = info.Platform
+			baseAppID = info.AppID
+		} else if svcName == "epic" {
+			var appName string
+			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+				appName = matches[1]
+			}
+			gameTitle, platform = proxy.ResolveEpicGame(s.db, appName, "")
+		} else if svcName == "xbox" {
+			gameTitle = "Xbox Game Package"
+			platform = "Xbox / PC"
+		} else {
+			gameTitle = proxy.ResolveGameTitle(s.db, svcName, depotID, l.Path)
+			platform = proxy.FormatPlatform("", "", "")
+		}
+
+		var sessionKey string
+		if svcName == "steam" && baseAppID > 0 {
+			sessionKey = fmt.Sprintf("%s:steam:%d", clientIP, baseAppID)
+		} else if svcName == "epic" {
+			sessionKey = fmt.Sprintf("%s:epic:%s", clientIP, strings.ToLower(gameTitle))
+		} else {
+			sessionKey = fmt.Sprintf("%s:%s:%s", clientIP, svcName, strings.ToLower(gameTitle))
+		}
+
+		session, exists := sessionsMap[sessionKey]
+		if !exists {
+			session = &proxy.GameDownloadSession{
+				Key:              sessionKey,
+				ClientIP:         clientIP,
+				Store:            proxy.FormatStoreName(svcName),
+				Service:          svcName,
+				GameTitle:        gameTitle,
+				AppID:            baseAppID,
+				Platform:         platform,
+				Depots:           []int64{},
+				DepotLinks:       []proxy.DepotLinkInfo{},
+				BytesTransferred: 0,
+				TotalDepotSize:   0,
+				ChunkCount:       0,
+				FirstSeen:        l.CreatedAt,
+				LastActive:       l.CreatedAt,
+				Timestamp:        l.CreatedAt.Format("15:04:05"),
+			}
+			sessionsMap[sessionKey] = session
+		}
+
+		// Update title / platform if improved
+		if (strings.HasPrefix(session.GameTitle, "Steam App ") || session.GameTitle == "Steam Game Client" || session.GameTitle == "") && gameTitle != "" && !strings.HasPrefix(gameTitle, "Steam App ") {
+			session.GameTitle = gameTitle
+		}
+		if platform != "" && platform != "PC" {
+			session.Platform = platform
+		}
+
+		if l.CreatedAt.After(session.LastActive) {
+			session.LastActive = l.CreatedAt
+			session.Timestamp = l.CreatedAt.Format("15:04:05")
+		}
+
+		if depotID > 0 {
+			hasDepot := false
+			for _, d := range session.Depots {
+				if d == depotID {
+					hasDepot = true
+					break
+				}
+			}
+			if !hasDepot {
+				session.Depots = append(session.Depots, depotID)
+				session.DepotLinks = append(session.DepotLinks, proxy.DepotLinkInfo{
+					DepotID:   depotID,
+					LookupURL: lookupURL,
+				})
+			}
+		} else if svcName == "epic" && lookupURL != "" && len(session.DepotLinks) == 0 {
+			session.DepotLinks = append(session.DepotLinks, proxy.DepotLinkInfo{
+				ChunkID:   chunkID,
+				LookupURL: lookupURL,
+			})
+		}
+
+		session.BytesTransferred += l.BytesTransferred
+		session.ChunkCount++
+		if l.IsHit {
+			session.Hits++
+		} else {
+			session.Misses++
+		}
+
+		var combinedDepotSize int64
+		for _, d := range session.Depots {
+			info := proxy.ResolveSteamDepot(s.db, d, "")
+			if info.TotalSize > 0 {
+				combinedDepotSize += info.TotalSize
+			}
+		}
+		if combinedDepotSize > session.BytesTransferred {
+			session.TotalDepotSize = combinedDepotSize
+		} else {
+			session.TotalDepotSize = session.BytesTransferred
+		}
+	}
+
+	result := make([]*proxy.GameDownloadSession, 0, len(sessionsMap))
+	for _, sess := range sessionsMap {
+		result = append(result, sess)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LastActive.After(result[j].LastActive)
+	})
+	return result
+}
+
 
 // ServiceItem represents metadata for an integrated or planned game service
 type ServiceItem struct {
