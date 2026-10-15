@@ -348,6 +348,111 @@ func (db *DB) UpsertWatchedApp(app WatchedApp) error {
 	return err
 }
 
+// DeleteWatchedApp removes an app from the watched library
+func (db *DB) DeleteWatchedApp(appID int64, service string) error {
+	if db == nil || appID <= 0 {
+		return nil
+	}
+	if service == "" {
+		service = "steam"
+	}
+	_, err := db.Exec("DELETE FROM watched_apps WHERE app_id = ? AND service = ?", appID, service)
+	return err
+}
+
+// InterceptedGame represents a game discovered/intercepted in cache that is not in watched_apps
+type InterceptedGame struct {
+	AppID        int64     `json:"app_id"`
+	Service      string    `json:"service"`
+	Name         string    `json:"name"`
+	Platform     string    `json:"platform"`
+	TotalSize    int64     `json:"total_size"`
+	CachedBytes  int64     `json:"cached_bytes"`
+	CachedChunks int64     `json:"cached_chunks"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
+// GetInterceptedGames returns cached/intercepted games that are not in watched_apps
+func (db *DB) GetInterceptedGames() ([]InterceptedGame, error) {
+	if db == nil {
+		return []InterceptedGame{}, nil
+	}
+
+	var games []InterceptedGame
+
+	// 1. Steam games from depot_meta_cache + chunk_cache
+	steamQuery := `
+	SELECT 
+		d.app_id,
+		d.service,
+		d.game_title,
+		COALESCE((SELECT d2.platform FROM depot_meta_cache d2 JOIN chunk_cache c2 ON c2.depot_id = d2.depot_id WHERE d2.app_id = d.app_id LIMIT 1), d.platform) as platform,
+		COALESCE((SELECT SUM(DISTINCT d3.total_size) FROM depot_meta_cache d3 WHERE d3.app_id = d.app_id), 0) as total_size,
+		COUNT(c.chunk_id) as cached_chunks,
+		COALESCE(SUM(c.size_bytes), 0) as cached_bytes,
+		COALESCE(MAX(c.downloaded_at), MAX(d.last_updated)) as last_seen
+	FROM depot_meta_cache d
+	LEFT JOIN chunk_cache c ON c.depot_id = d.depot_id
+	WHERE d.app_id > 0
+	  AND d.app_id NOT IN (SELECT app_id FROM watched_apps WHERE service = d.service)
+	GROUP BY d.app_id, d.service
+	ORDER BY last_seen DESC;
+	`
+
+	rows, err := db.Query(steamQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var g InterceptedGame
+			var lastSeenStr string
+			if err := rows.Scan(&g.AppID, &g.Service, &g.Name, &g.Platform, &g.TotalSize, &g.CachedChunks, &g.CachedBytes, &lastSeenStr); err == nil {
+				t, parseErr := time.Parse("2006-01-02 15:04:05", lastSeenStr)
+				if parseErr != nil {
+					t, _ = time.Parse(time.RFC3339, lastSeenStr)
+				}
+				g.LastSeen = t
+				games = append(games, g)
+			}
+		}
+	}
+
+	// 2. Epic Games and other services from game_meta_cache + chunk_cache
+	epicQuery := `
+	SELECT 
+		COALESCE(g.app_id, 0),
+		g.service,
+		g.name,
+		g.platform,
+		0 as total_size,
+		COUNT(c.chunk_id) as cached_chunks,
+		COALESCE(SUM(c.size_bytes), 0) as cached_bytes,
+		COALESCE(MAX(c.downloaded_at), MAX(g.last_updated)) as last_seen
+	FROM game_meta_cache g
+	LEFT JOIN chunk_cache c ON c.service = g.service
+	WHERE g.name NOT IN (SELECT name FROM watched_apps WHERE service = g.service)
+	GROUP BY g.id, g.service
+	ORDER BY last_seen DESC;
+	`
+	epicRows, err := db.Query(epicQuery)
+	if err == nil {
+		defer epicRows.Close()
+		for epicRows.Next() {
+			var g InterceptedGame
+			var lastSeenStr string
+			if err := epicRows.Scan(&g.AppID, &g.Service, &g.Name, &g.Platform, &g.TotalSize, &g.CachedChunks, &g.CachedBytes, &lastSeenStr); err == nil {
+				t, parseErr := time.Parse("2006-01-02 15:04:05", lastSeenStr)
+				if parseErr != nil {
+					t, _ = time.Parse(time.RFC3339, lastSeenStr)
+				}
+				g.LastSeen = t
+				games = append(games, g)
+			}
+		}
+	}
+
+	return games, nil
+}
+
 // GetStats returns aggregated metrics and hit ratio
 func (db *DB) GetStats() (StatSummary, error) {
 	var stats StatSummary
