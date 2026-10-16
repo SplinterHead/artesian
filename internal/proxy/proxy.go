@@ -20,6 +20,7 @@ import (
 	"artesian/internal/cache"
 	"artesian/internal/config"
 	"artesian/internal/db"
+	"artesian/internal/manifest"
 	"artesian/internal/services"
 	"artesian/internal/ws"
 )
@@ -49,7 +50,7 @@ type GameDownloadSession struct {
 	Misses           int64           `json:"misses"`
 	FirstSeen        time.Time       `json:"first_seen"`
 	LastActive       time.Time       `json:"last_active"`
-	Timestamp        string          `json:"timestamp"`          // Latest chunk timestamp "15:04:05"
+	Timestamp        string          `json:"timestamp"`          // Initial chunk timestamp "15:04:05"
 }
 
 // TrafficEvent is streamed via WebSocket to the frontend in real time
@@ -183,7 +184,7 @@ func isSelfOrLoopback(host string) bool {
 	if idx := strings.Index(h, ":"); idx != -1 {
 		h = h[:idx]
 	}
-	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" || h == "artesian" || h == ""
+	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" || h == "artesian" || h == "" || h == "lancache.steamcontent.com"
 }
 
 // NewServer initializes the proxy engine
@@ -261,6 +262,7 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 				return nil
 			}
 
+			res.Header.Set("X-LanCache-Processed-By", "artesian")
 			if ctxData.service != nil {
 				res.Header.Set("X-Artesian-Cache", "MISS")
 				res.Header.Set("X-Artesian-Service", ctxData.serviceName)
@@ -276,9 +278,26 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 					go func(svcName, cKey string, data []byte) {
 						destPath, written, err := s.cache.Store(svcName, cKey, bytes.NewReader(data))
 						if err == nil && s.db != nil {
+							// 1. Steam chunk caching
 							depotID, chunkHash, ok := cache.ParseSteamChunkExtract(cKey)
 							if ok {
 								_ = s.db.RecordChunk(chunkHash, svcName, depotID, 0, written, destPath)
+							}
+
+							// 2. Steam manifest interception and automatic chunk indexing
+							if mDepotID, mID, isManifest := manifest.ParseManifestDepotFromURL(cKey); isManifest {
+								storageDir := "/data/cache"
+								if s.cache != nil {
+									storageDir = s.cache.GetBaseDir()
+								}
+								manifest.SaveRawManifest(storageDir, mDepotID, mID, data)
+								parsedChunks, pErr := manifest.ParseManifestBytes(data)
+								if pErr == nil && len(parsedChunks) > 0 {
+									log.Printf("[Artesian Proxy] Intercepted and indexed %d genuine chunks for depot %d (manifest %d)", len(parsedChunks), mDepotID, mID)
+									_ = s.db.SaveManifestChunks(mDepotID, mID, parsedChunks)
+								} else if pErr != nil {
+									log.Printf("[Artesian Proxy] Warning: Could not parse intercepted manifest for depot %d: %v", mDepotID, pErr)
+								}
 							}
 						}
 					}(ctxData.serviceName, ctxData.cacheKey, bodyBytes)
@@ -336,14 +355,15 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
-	// 1. Loop prevention check
-	if req.Header.Get("X-Artesian-Loop") != "" {
+	// 1. Loop and internal prefill prevention check
+	if req.Header.Get("X-Artesian-Loop") != "" || req.Header.Get("X-Artesian-Prefill") != "" {
 		http.Error(w, "Proxy loop detected: request forwarded back to Artesian", http.StatusLoopDetected)
 		return
 	}
 
 	// 2. Self / Localhost probe protection
 	if isSelfOrLoopback(req.Host) {
+		w.Header().Set("X-LanCache-Processed-By", "artesian")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("Artesian Unified Game Content Cache Proxy\nProxy active on :80\nWeb UI active at http://localhost:8080\n"))
@@ -367,6 +387,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 		if err == nil {
 			defer file.Close()
 
+			w.Header().Set("X-LanCache-Processed-By", "artesian")
 			w.Header().Set("X-Artesian-Cache", "HIT")
 			w.Header().Set("X-Artesian-Service", serviceName)
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
@@ -545,7 +566,9 @@ func (s *Server) RecordGameTraffic(clientIP, service, gameTitle, platform, uri s
 	}
 
 	session.LastActive = now
-	session.Timestamp = nowStr
+	if session.Timestamp == "" {
+		session.Timestamp = nowStr
+	}
 	session.BytesTransferred += bytesCount
 	session.ChunkCount++
 	if isHit {
@@ -570,6 +593,102 @@ func (s *Server) RecordGameTraffic(clientIP, service, gameTitle, platform, uri s
 	sessionCopy.Depots = append([]int64(nil), session.Depots...)
 	sessionCopy.DepotLinks = append([]DepotLinkInfo(nil), session.DepotLinks...)
 	return &sessionCopy
+}
+
+// RecordPrefillProgress logs prefill download progress and updates active downloads table
+func (s *Server) RecordPrefillProgress(clientIP, service, gameTitle, platform string, depotID int64, appID int64, chunkID string, bytesTransferred, totalBytes int64) {
+	if clientIP == "" {
+		clientIP = "Artesian"
+	}
+	if service == "" {
+		service = "steam"
+	}
+	store := FormatStoreName(service)
+	sessionKey := fmt.Sprintf("%s:%s:%d", clientIP, service, appID)
+
+	s.sessionsMu.Lock()
+	now := time.Now()
+	nowStr := now.Format("15:04:05")
+
+	session, exists := s.activeDownloads[sessionKey]
+	if !exists {
+		session = &GameDownloadSession{
+			Key:              sessionKey,
+			ClientIP:         clientIP,
+			Store:            store,
+			Service:          service,
+			GameTitle:        gameTitle,
+			AppID:            appID,
+			Platform:         platform,
+			Depots:           []int64{depotID},
+			DepotLinks:       []DepotLinkInfo{{DepotID: depotID, LookupURL: fmt.Sprintf("https://steamdb.info/depot/%d", depotID)}},
+			BytesTransferred: bytesTransferred,
+			TotalDepotSize:   totalBytes,
+			ChunkCount:       1,
+			FirstSeen:        now,
+			LastActive:       now,
+			Timestamp:        nowStr,
+		}
+		s.activeDownloads[sessionKey] = session
+	} else {
+		session.LastActive = now
+		if session.Timestamp == "" {
+			session.Timestamp = nowStr
+		}
+		session.BytesTransferred = bytesTransferred
+		if totalBytes > 0 {
+			session.TotalDepotSize = totalBytes
+		}
+		session.ChunkCount++
+		if gameTitle != "" && !strings.HasPrefix(gameTitle, "Steam App ") {
+			session.GameTitle = gameTitle
+		}
+		if platform != "" && platform != "PC" {
+			session.Platform = platform
+		}
+		hasDepot := false
+		for _, d := range session.Depots {
+			if d == depotID {
+				hasDepot = true
+				break
+			}
+		}
+		if !hasDepot && depotID > 0 {
+			session.Depots = append(session.Depots, depotID)
+			session.DepotLinks = append(session.DepotLinks, DepotLinkInfo{
+				DepotID:   depotID,
+				LookupURL: fmt.Sprintf("https://steamdb.info/depot/%d", depotID),
+			})
+		}
+	}
+
+	sessionCopy := *session
+	sessionCopy.Depots = append([]int64(nil), session.Depots...)
+	sessionCopy.DepotLinks = append([]DepotLinkInfo(nil), session.DepotLinks...)
+	s.sessionsMu.Unlock()
+
+	ws.GetHub().Broadcast("proxy:download_update", &sessionCopy)
+}
+
+// CompletePrefillSession marks the prefill session as finished so it is cleanly pruned after grace period
+func (s *Server) CompletePrefillSession(clientIP, service string, appID int64) {
+	if clientIP == "" {
+		clientIP = "Artesian"
+	}
+	sessionKey := fmt.Sprintf("%s:%s:%d", clientIP, service, appID)
+
+	s.sessionsMu.Lock()
+	if sess, ok := s.activeDownloads[sessionKey]; ok {
+		sess.BytesTransferred = sess.TotalDepotSize
+		sess.LastActive = time.Now()
+		sessionCopy := *sess
+		sessionCopy.Depots = append([]int64(nil), sess.Depots...)
+		sessionCopy.DepotLinks = append([]DepotLinkInfo(nil), sess.DepotLinks...)
+		s.sessionsMu.Unlock()
+		ws.GetHub().Broadcast("proxy:download_update", &sessionCopy)
+		return
+	}
+	s.sessionsMu.Unlock()
 }
 
 // cleanupInactiveDownloads periodically checks for downloads that finished or stopped
@@ -638,7 +757,7 @@ func (s *Server) GetActiveDownloads() []*GameDownloadSession {
 	s.sessionsMu.Unlock()
 
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].LastActive.After(result[j].LastActive)
+		return result[i].FirstSeen.After(result[j].FirstSeen)
 	})
 
 	return result
@@ -652,6 +771,25 @@ func (s *Server) ClearActiveDownloads() {
 	ws.GetHub().Broadcast("proxy:downloads_cleared", map[string]interface{}{})
 }
 
+// CancelActiveDownloadsForApp removes any active download sessions for a given appID and broadcasts removal
+func (s *Server) CancelActiveDownloadsForApp(service string, appID int64) {
+	s.sessionsMu.Lock()
+	var removedKeys []string
+	for key, sess := range s.activeDownloads {
+		if (service == "" || strings.EqualFold(sess.Service, service)) && sess.AppID == appID {
+			delete(s.activeDownloads, key)
+			removedKeys = append(removedKeys, key)
+		}
+	}
+	s.sessionsMu.Unlock()
+
+	for _, key := range removedKeys {
+		ws.GetHub().Broadcast("proxy:download_removed", map[string]string{
+			"key": key,
+		})
+	}
+}
+
 func (s *Server) publishTraffic(rawClientIP, host, method, uri, userAgent string, status int, isHit bool, bytesCount, duration int64, service string) {
 	// Drop port from client IP
 	clientIP := rawClientIP
@@ -660,6 +798,11 @@ func (s *Server) publishTraffic(rawClientIP, host, method, uri, userAgent string
 	}
 	clientIP = strings.TrimPrefix(clientIP, "[")
 	clientIP = strings.TrimSuffix(clientIP, "]")
+
+	// Never publish internal container loopback traffic as client downloads
+	if clientIP == "127.0.0.1" || clientIP == "::1" || clientIP == "localhost" {
+		return
+	}
 
 	store := FormatStoreName(service)
 
@@ -835,6 +978,9 @@ func (s *Server) flushLogs(entries []dbLogEntry) {
 	defer stmt.Close()
 
 	for _, e := range entries {
+		if e.clientIP == "127.0.0.1" || e.clientIP == "::1" || e.clientIP == "localhost" {
+			continue
+		}
 		_, _ = stmt.Exec(e.clientIP, e.host, e.method, e.path, e.status, e.isHit, e.bytes, e.duration)
 	}
 	_ = tx.Commit()
