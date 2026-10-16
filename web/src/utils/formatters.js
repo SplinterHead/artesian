@@ -1,11 +1,13 @@
 import { platformLogos } from './logos';
 
 export function formatBytes(bytes) {
-  if (!bytes) return '0 B';
+  if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (i === 0) return bytes + ' B';
+  const val = bytes / Math.pow(k, i);
+  return val.toFixed(2) + ' ' + sizes[i];
 }
 
 export function formatSpeed(bytesPerSec) {
@@ -88,3 +90,13 @@ export function getPlatformIcon(platform) {
   }
   return 'fa-brands fa-windows';
 }
+
+export function getPlatformList(platform) {
+  if (!platform) return [];
+  if (Array.isArray(platform)) return platform;
+  return String(platform)
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean);
+}
+
