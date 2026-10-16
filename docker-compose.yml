@@ -16,7 +16,6 @@ services:
       - ./data/cache:/data/cache
       - ./data/db:/data
       - ./data/manifests:/data/manifests
-      - ${HOME}/Library/Application Support/Steam/depotcache:/data/steam_depotcache:ro
     environment:
       - TZ=UTC
     ulimits:
