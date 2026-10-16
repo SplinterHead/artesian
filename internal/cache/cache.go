@@ -21,10 +21,12 @@ var steamChunkRegex = regexp.MustCompile(`/depot/(\d+)/chunk/([a-fA-F0-9]{40})`)
 
 // Storage handles local disk caching of content chunks
 type Storage struct {
-	baseDir     string
-	maxSize     int64
-	minFreeDisk int64
-	mu          sync.RWMutex
+	baseDir       string
+	manifestDir   string
+	depotCacheDir string
+	maxSize       int64
+	minFreeDisk   int64
+	mu            sync.RWMutex
 
 	// Live I/O tracking
 	readBytesTotal  int64
@@ -42,11 +44,22 @@ func NewStorage(cfg config.CacheConfig) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create cache directory %s: %w", cfg.StorageDir, err)
 	}
 
+	manifestDir := cfg.ManifestDir
+	if manifestDir == "" {
+		manifestDir = "/data/manifests"
+	}
+	depotCacheDir := cfg.DepotCacheDir
+	if depotCacheDir == "" {
+		depotCacheDir = "/data/steam_depotcache"
+	}
+
 	s := &Storage{
-		baseDir:      cfg.StorageDir,
-		maxSize:      cfg.MaxSizeBytes,
-		minFreeDisk:  cfg.MinFreeDisk,
-		lastIOPeriod: time.Now().Unix(),
+		baseDir:       cfg.StorageDir,
+		manifestDir:   manifestDir,
+		depotCacheDir: depotCacheDir,
+		maxSize:       cfg.MaxSizeBytes,
+		minFreeDisk:   cfg.MinFreeDisk,
+		lastIOPeriod:  time.Now().Unix(),
 	}
 
 	go s.ioRateMonitor()
@@ -70,6 +83,20 @@ func (s *Storage) GetBaseDir() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.baseDir
+}
+
+// GetManifestDir returns the configured manifest pool directory
+func (s *Storage) GetManifestDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.manifestDir
+}
+
+// GetDepotCacheDir returns the mounted Steam depotcache directory
+func (s *Storage) GetDepotCacheDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.depotCacheDir
 }
 
 // ParseSteamChunkExtract extracts depotID and chunkHash if URL is a Steam chunk
@@ -191,3 +218,14 @@ func (s *Storage) ioRateMonitor() {
 		s.lastWriteBytes = nowWrite
 	}
 }
+
+// DeleteDepot removes all stored chunk files and directory structure for a depot
+func (s *Storage) DeleteDepot(service string, depotID int64) error {
+	s.mu.RLock()
+	baseDir := s.baseDir
+	s.mu.RUnlock()
+
+	depotDir := filepath.Join(baseDir, service, fmt.Sprintf("%d", depotID))
+	return os.RemoveAll(depotDir)
+}
+

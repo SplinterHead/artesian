@@ -268,6 +268,7 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 													} `json:"config"`
 													DlcAppID string `json:"dlcappid"`
 													Manifests map[string]struct {
+														Gid      string `json:"gid"`
 														Download string `json:"download"`
 														Size     string `json:"size"`
 													} `json:"manifests"`
@@ -308,6 +309,21 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 													}
 												}
 
+												var manifestID int64
+												if pub, ok := dVal.Manifests["public"]; ok {
+													if gid, err := strconv.ParseInt(pub.Gid, 10, 64); err == nil {
+														manifestID = gid
+													}
+												}
+												if manifestID == 0 {
+													for _, m := range dVal.Manifests {
+														if gid, err := strconv.ParseInt(m.Gid, 10, 64); err == nil && gid > 0 {
+															manifestID = gid
+															break
+														}
+													}
+												}
+
 												info := &DepotInfo{
 													GameTitle: depotTitle,
 													AppID:     depotAppID,
@@ -321,12 +337,13 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 
 												if database != nil {
 													_ = database.UpsertDepotMeta(db.DepotMeta{
-														DepotID:   dID,
-														AppID:     depotAppID,
-														Service:   "steam",
-														GameTitle: depotTitle,
-														Platform:  platform,
-														TotalSize: totalSize,
+														DepotID:    dID,
+														AppID:      depotAppID,
+														Service:    "steam",
+														GameTitle:  depotTitle,
+														Platform:   platform,
+														TotalSize:  totalSize,
+														ManifestID: manifestID,
 													})
 												}
 
@@ -545,3 +562,140 @@ func ResolveEpicGame(database *db.DB, rawAppName, userAgent string) (gameTitle, 
 
 	return formatted, platform
 }
+
+// FetchRemoteSteamAppInfo queries the SteamCMD PICS endpoint to populate depot_meta_cache with all depots and sizes for an App ID
+func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
+	if appID <= 0 {
+		return fmt.Errorf("invalid app ID: %d", appID)
+	}
+
+	client := &http.Client{Timeout: 6 * time.Second}
+	apiURL := fmt.Sprintf("https://api.steamcmd.net/v1/info/%d", appID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Artesian/1.0 (Game Cache Proxy)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
+	}
+
+	var steamCmdData struct {
+		Status string `json:"status"`
+		Data   map[string]struct {
+			Common struct {
+				Name   string `json:"name"`
+				Type   string `json:"type"`
+				Parent string `json:"parent"`
+			} `json:"common"`
+			Extended struct {
+				DlcForAppId string `json:"dlcforappid"`
+			} `json:"extended"`
+			Depots map[string]json.RawMessage `json:"depots"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&steamCmdData); err != nil {
+		return err
+	}
+
+	appKey := fmt.Sprintf("%d", appID)
+	appData, ok := steamCmdData.Data[appKey]
+	if !ok || len(appData.Depots) == 0 {
+		return fmt.Errorf("no depot data found for app %d", appID)
+	}
+
+	gameTitle := strings.TrimSpace(appData.Common.Name)
+
+	for dKey, dRaw := range appData.Depots {
+		dID, err := strconv.ParseInt(dKey, 10, 64)
+		if err != nil {
+			continue // skip non-numeric keys like branches, baselanguages
+		}
+
+		var dVal struct {
+			Config struct {
+				Oslist string `json:"oslist"`
+				Osarch string `json:"osarch"`
+			} `json:"config"`
+			Manifests map[string]struct {
+				Gid      string `json:"gid"`
+				Download string `json:"download"`
+				Size     string `json:"size"`
+			} `json:"manifests"`
+		}
+		if err := json.Unmarshal(dRaw, &dVal); err != nil {
+			continue
+		}
+
+		platform := FormatPlatform(dVal.Config.Oslist, dVal.Config.Osarch, "")
+
+		var manifestID int64
+		if pub, ok := dVal.Manifests["public"]; ok {
+			if gid, err := strconv.ParseInt(pub.Gid, 10, 64); err == nil {
+				manifestID = gid
+			}
+		}
+		if manifestID == 0 {
+			for _, m := range dVal.Manifests {
+				if gid, err := strconv.ParseInt(m.Gid, 10, 64); err == nil && gid > 0 {
+					manifestID = gid
+					break
+				}
+			}
+		}
+
+		var totalSize int64
+		if pub, ok := dVal.Manifests["public"]; ok {
+			if sz, err := strconv.ParseInt(pub.Download, 10, 64); err == nil && sz > 0 {
+				totalSize = sz
+			} else if sz, err := strconv.ParseInt(pub.Size, 10, 64); err == nil {
+				totalSize = sz
+			}
+		}
+		if totalSize == 0 {
+			for _, m := range dVal.Manifests {
+				if sz, err := strconv.ParseInt(m.Download, 10, 64); err == nil && sz > 0 {
+					totalSize = sz
+					break
+				} else if sz, err := strconv.ParseInt(m.Size, 10, 64); err == nil && sz > 0 {
+					totalSize = sz
+					break
+				}
+			}
+		}
+
+		info := &DepotInfo{
+			GameTitle: gameTitle,
+			AppID:     appID,
+			Platform:  platform,
+			TotalSize: totalSize,
+		}
+
+		depotInfoCacheMu.Lock()
+		depotInfoCache[dID] = info
+		depotInfoCacheMu.Unlock()
+
+		if database != nil {
+			_ = database.UpsertDepotMeta(db.DepotMeta{
+				DepotID:    dID,
+				AppID:      appID,
+				Service:    "steam",
+				GameTitle:  gameTitle,
+				Platform:   platform,
+				TotalSize:  totalSize,
+				ManifestID: manifestID,
+			})
+		}
+	}
+
+	return nil
+}
+

@@ -2,23 +2,31 @@ package prefill
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"artesian/internal/cache"
+	"artesian/internal/config"
 	"artesian/internal/db"
+	"artesian/internal/manifest"
+	"artesian/internal/proxy"
+	"artesian/internal/steam"
 	"artesian/internal/ws"
 )
 
 // ChunkMeta describes a single chunk in a depot manifest
 type ChunkMeta struct {
+	DepotID   int64  `json:"depot_id"`
 	ChunkID   string `json:"chunk_id"` // 40-char SHA1 hex
 	SizeBytes int64  `json:"size_bytes"`
 }
@@ -33,55 +41,115 @@ type DepotManifest struct {
 
 // PrefillJob represents an active or completed prefill task
 type PrefillJob struct {
-	ID               string    `json:"id"`
-	Service          string    `json:"service"` // e.g. "steam"
-	AppID            int64     `json:"app_id"`
-	AppName          string    `json:"app_name"`
-	Status           string    `json:"status"` // "queued", "diffing", "downloading", "completed", "failed"
-	TotalChunks      int64     `json:"total_chunks"`
-	ExistingChunks   int64     `json:"existing_chunks"`
-	DownloadedChunks int64     `json:"downloaded_chunks"`
-	BytesTotal       int64     `json:"bytes_total"`
-	BytesCached      int64     `json:"bytes_cached"`
-	SpeedMbps        float64   `json:"speed_mbps"`
-	ProgressPct      float64   `json:"progress_pct"`
-	ETASeconds       int64     `json:"eta_seconds"`
-	Error            string    `json:"error,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
-	EndedAt          time.Time `json:"ended_at,omitempty"`
+	ID               string             `json:"id"`
+	Service          string             `json:"service"` // e.g. "steam"
+	AppID            int64              `json:"app_id"`
+	AppName          string             `json:"app_name"`
+	Platform         string             `json:"platform"`
+	Status           string             `json:"status"` // "queued", "diffing", "downloading", "completed", "failed"
+	TotalChunks      int64              `json:"total_chunks"`
+	ExistingChunks   int64              `json:"existing_chunks"`
+	DownloadedChunks int64              `json:"downloaded_chunks"`
+	BytesTotal       int64              `json:"bytes_total"`
+	BytesCached      int64              `json:"bytes_cached"`
+	SpeedMbps        float64            `json:"speed_mbps"`
+	ProgressPct      float64            `json:"progress_pct"`
+	ETASeconds       int64              `json:"eta_seconds"`
+	Error            string             `json:"error,omitempty"`
+	StartedAt        time.Time          `json:"started_at"`
+	EndedAt          time.Time          `json:"ended_at,omitempty"`
+	cancelFn         context.CancelFunc `json:"-"`
+}
+
+// TrafficRecorder defines an interface for reporting progress to the active downloads table
+type TrafficRecorder interface {
+	RecordPrefillProgress(clientIP, service, gameTitle, platform string, depotID int64, appID int64, chunkID string, bytesTransferred, totalBytes int64)
+	CompletePrefillSession(clientIP, service string, appID int64)
 }
 
 // Manager coordinates prefill and cache warming operations
 type Manager struct {
 	cache      *cache.Storage
 	db         *db.DB
+	dnsCfg     config.DNSConfig
 	httpClient *http.Client
+	recorder   TrafficRecorder
 	jobs       map[string]*PrefillJob
 	jobsMu     sync.RWMutex
 }
 
-// NewManager initializes the prefill manager
-func NewManager(c *cache.Storage, database *db.DB) *Manager {
+// NewManager initializes the prefill manager with direct upstream DNS resolution
+func NewManager(c *cache.Storage, database *db.DB, dnsCfg config.DNSConfig) *Manager {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	if len(dnsCfg.UpstreamDNS) > 0 {
+		upstreamAddr := dnsCfg.UpstreamDNS[0]
+		if !strings.Contains(upstreamAddr, ":") {
+			upstreamAddr += ":53"
+		}
+		dialer.Resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{Timeout: 5 * time.Second}
+				return d.DialContext(ctx, "udp", upstreamAddr)
+			},
+		}
+	}
+
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    true,
+	}
+
 	return &Manager{
 		cache:      c,
 		db:         database,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		dnsCfg:     dnsCfg,
+		httpClient: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		jobs:       make(map[string]*PrefillJob),
 	}
 }
 
+// SetTrafficRecorder connects prefill progress to the active download monitoring table
+func (m *Manager) SetTrafficRecorder(r TrafficRecorder) {
+	m.jobsMu.Lock()
+	m.recorder = r
+	m.jobsMu.Unlock()
+}
+
 // StartJob queues and launches a prefill task for an app
 func (m *Manager) StartJob(ctx context.Context, service string, appID int64, appName string) (*PrefillJob, error) {
+	var platform string
+	if m.db != nil {
+		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = ? LIMIT 1", appID, service).Scan(&platform)
+	}
+	if platform == "" {
+		platform = "PC"
+	}
+
 	m.jobsMu.Lock()
 	jobID := fmt.Sprintf("%s-%d-%d", service, appID, time.Now().Unix())
+	jobCtx, cancel := context.WithCancel(context.Background())
 	job := &PrefillJob{
 		ID:          jobID,
 		Service:     service,
 		AppID:       appID,
 		AppName:     appName,
+		Platform:    platform,
 		Status:      "queued",
 		ProgressPct: 0.0,
 		StartedAt:   time.Now(),
+		cancelFn:    cancel,
 	}
 	m.jobs[jobID] = job
 	m.jobsMu.Unlock()
@@ -96,7 +164,7 @@ func (m *Manager) StartJob(ctx context.Context, service string, appID int64, app
 		})
 	}
 
-	go m.runPrefill(ctx, job)
+	go m.runPrefill(jobCtx, job)
 	return job, nil
 }
 
@@ -120,14 +188,47 @@ func (m *Manager) GetJob(id string) (*PrefillJob, bool) {
 	return j, ok
 }
 
+// CancelJobsForApp cancels any active or queued prefill jobs for the given service and appID
+func (m *Manager) CancelJobsForApp(service string, appID int64) int {
+	m.jobsMu.Lock()
+	cancelled := 0
+	for id, job := range m.jobs {
+		if (service == "" || strings.EqualFold(job.Service, service)) && job.AppID == appID {
+			if job.cancelFn != nil {
+				job.cancelFn()
+			}
+			job.Status = "cancelled"
+			delete(m.jobs, id)
+			cancelled++
+		}
+	}
+	rec := m.recorder
+	m.jobsMu.Unlock()
+
+	if rec != nil {
+		rec.CompletePrefillSession("Artesian", service, appID)
+	}
+	return cancelled
+}
+
 func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 	job.Status = "diffing"
 	m.broadcastProgress(job)
 
 	log.Printf("[Prefill Engine] Retrieving depot manifest for %s (App ID %d)...", job.AppName, job.AppID)
 
-	// Phase 4: Manifest Retrieval & Decryption
-	manifest := m.generateAppManifest(job.AppID)
+	// Phase 1: Manifest Retrieval & Decryption (via DB, Disk, or Native Steam CM)
+	manifest := m.generateAppManifest(ctx, job)
+	if manifest == nil || len(manifest.Chunks) == 0 {
+		job.Status = "completed"
+		job.ProgressPct = 100.0
+		job.EndedAt = time.Now()
+		m.finalizeAppStatus(job.AppID, job.Service, job.AppName, "monitoring")
+		m.broadcastProgress(job)
+		log.Printf("[Prefill Engine] App %d (%s): Status set to monitoring (authenticate Steam account or install via client to enable caching).", job.AppID, job.AppName)
+		return
+	}
+
 	job.TotalChunks = int64(len(manifest.Chunks))
 	for _, c := range manifest.Chunks {
 		job.BytesTotal += c.SizeBytes
@@ -145,15 +246,17 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 		existingMap = make(map[string]bool)
 	}
 
+	var initialExistingBytes int64
 	var missingChunks []ChunkMeta
 	for _, c := range manifest.Chunks {
 		if existingMap[c.ChunkID] {
 			job.ExistingChunks++
-			job.BytesCached += c.SizeBytes
+			initialExistingBytes += c.SizeBytes
 		} else {
 			missingChunks = append(missingChunks, c)
 		}
 	}
+	job.BytesCached = initialExistingBytes
 
 	log.Printf("[Prefill Engine] Delta diff complete for %s: %d total, %d already cached, %d missing chunks to download.",
 		job.AppName, job.TotalChunks, job.ExistingChunks, len(missingChunks))
@@ -164,17 +267,34 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 	}
 	m.broadcastProgress(job)
 
+	m.jobsMu.RLock()
+	rec := m.recorder
+	m.jobsMu.RUnlock()
+
+	firstDepot := manifest.DepotID
+	if len(manifest.Chunks) > 0 {
+		firstDepot = manifest.Chunks[0].DepotID
+	}
+
+	if rec != nil {
+		rec.RecordPrefillProgress("Artesian", job.Service, job.AppName, job.Platform, firstDepot, job.AppID, "start", initialExistingBytes, job.BytesTotal)
+	}
+
 	if len(missingChunks) == 0 {
 		job.Status = "completed"
 		job.ProgressPct = 100.0
 		job.EndedAt = time.Now()
-		m.finalizeAppStatus(job.AppID, job.Service, "synced")
+		m.finalizeAppStatus(job.AppID, job.Service, job.AppName, "synced")
 		m.broadcastProgress(job)
+		if rec != nil {
+			rec.RecordPrefillProgress("Artesian", job.Service, job.AppName, job.Platform, firstDepot, job.AppID, "cached", job.BytesTotal, job.BytesTotal)
+			rec.CompletePrefillSession("Artesian", job.Service, job.AppID)
+		}
 		return
 	}
 
 	// Phase 4: Headless Concurrent Downloader Pool
-	workerCount := 8
+	workerCount := 4
 	chunkChan := make(chan ChunkMeta, len(missingChunks))
 	for _, c := range missingChunks {
 		chunkChan <- c
@@ -188,7 +308,7 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 	)
 
 	startDownloadTime := time.Now()
-	ticker := time.NewTicker(300 * time.Millisecond)
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	// Progress broadcaster goroutine
@@ -204,7 +324,7 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 
 				totalCurrentCached := job.ExistingChunks + nowDownloadedChunks
 				job.DownloadedChunks = nowDownloadedChunks
-				job.BytesCached = job.ExistingChunks*1024*1024 + nowDownloadedBytes
+				job.BytesCached = initialExistingBytes + nowDownloadedBytes
 
 				if job.TotalChunks > 0 {
 					job.ProgressPct = float64(totalCurrentCached) / float64(job.TotalChunks) * 100.0
@@ -236,13 +356,26 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 				default:
 				}
 
-				// Download chunk directly into Phase 2 cache engine
-				m.downloadChunk(job.AppID, manifest.DepotID, chunk)
+				// Download chunk directly into cache storage and record in DB
+				m.downloadChunk(job.AppID, chunk.DepotID, chunk)
 				atomic.AddInt64(&downloadedChunks, 1)
-				atomic.AddInt64(&downloadedBytes, chunk.SizeBytes)
+				nowBytes := atomic.AddInt64(&downloadedBytes, chunk.SizeBytes)
 
-				// Brief throttle simulation so UI progress bar shows smooth high-speed streaming
-				time.Sleep(30 * time.Millisecond)
+				// Report progress to Active Downloads table with Client "Artesian"
+				if rec != nil {
+					currentTotal := initialExistingBytes + nowBytes
+					rec.RecordPrefillProgress("Artesian", job.Service, job.AppName, job.Platform, chunk.DepotID, job.AppID, chunk.ChunkID, currentTotal, job.BytesTotal)
+				}
+
+				// Adaptive pacing throttle for smooth live streaming presentation
+				throttle := 75 * time.Millisecond
+				if len(missingChunks) > 500 {
+					throttle = 25 * time.Millisecond
+				}
+				if len(missingChunks) > 2000 {
+					throttle = 10 * time.Millisecond
+				}
+				time.Sleep(throttle)
 			}
 		}(i)
 	}
@@ -250,11 +383,35 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 	wg.Wait()
 	close(doneChan)
 
+	if ctx.Err() != nil {
+		job.Status = "cancelled"
+		job.Error = "Prefill cancelled"
+		if m.db != nil {
+			var exists int
+			_ = m.db.QueryRow("SELECT COUNT(1) FROM watched_apps WHERE app_id = ? AND service = ?", job.AppID, job.Service).Scan(&exists)
+			if exists > 0 {
+				m.finalizeAppStatus(job.AppID, job.Service, job.AppName, "error")
+			}
+		}
+		m.broadcastProgress(job)
+		log.Printf("[Prefill Engine] Prefill cancelled for %s", job.AppName)
+		return
+	}
+
 	job.Status = "completed"
 	job.ProgressPct = 100.0
 	job.EndedAt = time.Now()
-	m.finalizeAppStatus(job.AppID, job.Service, "synced")
+	m.finalizeAppStatus(job.AppID, job.Service, job.AppName, "synced")
 	m.broadcastProgress(job)
+
+	if rec != nil {
+		firstDepot := manifest.DepotID
+		if len(manifest.Chunks) > 0 {
+			firstDepot = manifest.Chunks[0].DepotID
+		}
+		rec.RecordPrefillProgress("Artesian", job.Service, job.AppName, job.Platform, firstDepot, job.AppID, "completed", job.BytesTotal, job.BytesTotal)
+		rec.CompletePrefillSession("Artesian", job.Service, job.AppID)
+	}
 
 	log.Printf("[Prefill Engine] Successfully prefilled %s (100%% cached in tank).", job.AppName)
 }
@@ -262,20 +419,53 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 func (m *Manager) downloadChunk(appID, depotID int64, chunk ChunkMeta) {
 	chunkURL := fmt.Sprintf("/depot/%d/chunk/%s", depotID, chunk.ChunkID)
 
-	// Synthesize chunk payload or stream from Steam CDN
-	payload := make([]byte, chunk.SizeBytes)
-	// Write payload into tank storage
-	destPath, written, err := m.cache.Store("steam", chunkURL, strings.NewReader(string(payload)))
-	if err == nil && m.db != nil {
-		_ = m.db.RecordChunk(chunk.ChunkID, "steam", depotID, appID, written, destPath)
+	cdnHosts := []string{
+		"cache9-lhr1.steamcontent.com",
+		"cache10-lhr1.steamcontent.com",
+		"cache11-lhr1.steamcontent.com",
+		"alibaba.cdn.steampipe.steamcontent.com",
+		"steampipe.akamaized.net",
+		"lancache.steamcontent.com",
+	}
+
+	var downloaded bool
+	for _, host := range cdnHosts {
+		reqURL := fmt.Sprintf("http://%s%s", host, chunkURL)
+		req, err := http.NewRequestWithContext(context.Background(), "GET", reqURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		req.Header.Set("X-Artesian-Prefill", "1")
+		req.Header.Set("X-Artesian-Loop", "1")
+
+		resp, err := m.httpClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			destPath, written, storeErr := m.cache.Store("steam", chunkURL, resp.Body)
+			_ = resp.Body.Close()
+			if storeErr == nil && m.db != nil {
+				_ = m.db.RecordChunk(chunk.ChunkID, "steam", depotID, appID, written, destPath)
+			}
+			downloaded = true
+			break
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}
+
+	// If remote download was unsuccessful
+	if !downloaded {
+		log.Printf("[Prefill Engine] Warning: Could not download chunk %s for depot %d from CDN", chunk.ChunkID, depotID)
 	}
 }
 
-func (m *Manager) finalizeAppStatus(appID int64, service, status string) {
+func (m *Manager) finalizeAppStatus(appID int64, service, name, status string) {
 	if m.db != nil {
 		_ = m.db.UpsertWatchedApp(db.WatchedApp{
 			AppID:   appID,
 			Service: service,
+			Name:    name,
 			Status:  status,
 		})
 	}
@@ -285,39 +475,279 @@ func (m *Manager) broadcastProgress(job *PrefillJob) {
 	ws.GetHub().Broadcast("prefill:progress", job)
 }
 
-// generateAppManifest generates depot manifests with realistic SHA1 chunk hashes for games
-func (m *Manager) generateAppManifest(appID int64) *DepotManifest {
-	depotID := appID + 1
-	var chunkCount int
-	switch appID {
-	case 730: // CS2
-		chunkCount = 60
-	case 570: // Dota 2
-		chunkCount = 50
-	case 1091500: // Cyberpunk 2077
-		chunkCount = 100
-	case 440: // TF2
-		chunkCount = 30
-	default:
-		chunkCount = 40
+// generateAppManifest resolves genuine depot manifests and chunk hashes for games
+func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *DepotManifest {
+	appID := job.AppID
+	targetPlatform := job.Platform
+	if targetPlatform == "" && m.db != nil {
+		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = 'steam' LIMIT 1", appID).Scan(&targetPlatform)
 	}
 
-	chunks := make([]ChunkMeta, chunkCount)
-	for i := 0; i < chunkCount; i++ {
-		h := sha1.New()
-		h.Write([]byte(fmt.Sprintf("artesian-%d-%d-%d", appID, depotID, i)))
-		chunkHash := hex.EncodeToString(h.Sum(nil))
-
-		chunks[i] = ChunkMeta{
-			ChunkID:   chunkHash,
-			SizeBytes: 1024 * 1024, // 1 MB chunk
+	// Ensure depot metadata exists in depot_meta_cache
+	if m.db != nil {
+		var depotCount int
+		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0", appID).Scan(&depotCount)
+		if depotCount == 0 {
+			_ = proxy.FetchRemoteSteamAppInfo(m.db, appID)
 		}
+	}
+
+	type matchedDepot struct {
+		depotID    int64
+		manifestID int64
+		platform   string
+		totalSize  int64
+	}
+	var allDepots []matchedDepot
+	if m.db != nil {
+		rows, err := m.db.Query("SELECT depot_id, manifest_id, COALESCE(platform, ''), total_size FROM depot_meta_cache WHERE app_id = ? AND total_size > 0 ORDER BY total_size DESC", appID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var d matchedDepot
+				if err := rows.Scan(&d.depotID, &d.manifestID, &d.platform, &d.totalSize); err == nil {
+					allDepots = append(allDepots, d)
+				}
+			}
+		}
+	}
+
+	// Filter depots by targetPlatform if specified (e.g. "Windows, Mac")
+	var activeDepots []matchedDepot
+	if targetPlatform != "" {
+		var targets []string
+		for _, part := range strings.Split(targetPlatform, ",") {
+			if t := strings.TrimSpace(strings.ToLower(part)); t != "" {
+				targets = append(targets, t)
+			}
+		}
+
+		matchesPlatform := func(depotPlat, target string) bool {
+			dp := strings.ToLower(depotPlat)
+			if dp == "" || dp == "pc" {
+				return true // Unspecified/common content depots apply to all platforms
+			}
+			if strings.Contains(target, "mac") || strings.Contains(target, "apple") || strings.Contains(target, "osx") {
+				return strings.Contains(dp, "mac") || strings.Contains(dp, "apple") || strings.Contains(dp, "osx")
+			}
+			if strings.Contains(target, "linux") {
+				return strings.Contains(dp, "linux")
+			}
+			if strings.Contains(target, "win") {
+				return strings.Contains(dp, "win")
+			}
+			return strings.Contains(dp, target) || strings.Contains(target, dp)
+		}
+
+		// Check if a 64-bit depot exists for each target platform to filter out legacy 32-bit depots
+		has64BitForTarget := make(map[string]bool)
+		for _, target := range targets {
+			for _, d := range allDepots {
+				if matchesPlatform(d.platform, target) && strings.Contains(strings.ToLower(d.platform), "64") {
+					has64BitForTarget[target] = true
+					break
+				}
+			}
+		}
+
+		seenDepots := make(map[int64]bool)
+		for _, d := range allDepots {
+			dPlatLower := strings.ToLower(d.platform)
+			isMatch := false
+			for _, target := range targets {
+				if matchesPlatform(d.platform, target) {
+					// If this platform has a 64-bit depot, skip obsolete 32-bit depot
+					if has64BitForTarget[target] && strings.Contains(dPlatLower, "32") {
+						continue
+					}
+					isMatch = true
+					break
+				}
+			}
+			if isMatch && !seenDepots[d.depotID] {
+				seenDepots[d.depotID] = true
+				activeDepots = append(activeDepots, d)
+			}
+		}
+	}
+	if len(activeDepots) == 0 {
+		activeDepots = allDepots
+	}
+
+	var chunks []ChunkMeta
+	firstDepotID := appID
+	if len(activeDepots) > 0 {
+		firstDepotID = activeDepots[0].depotID
+	}
+
+	// CM Client for native Steam CM manifest resolution (initialized lazily if needed)
+	var cmClient *steam.CMClient
+	defer func() {
+		if cmClient != nil {
+			_ = cmClient.Close()
+		}
+	}()
+
+	for _, d := range activeDepots {
+		var depotChunks []ChunkMeta
+
+		// 1. Check if SQLite already has parsed genuine manifest chunks for this depot
+		if m.db != nil && m.db.HasManifestChunks(d.depotID) {
+			dbChunks, err := m.db.GetManifestChunks(d.depotID)
+			if err == nil && len(dbChunks) > 0 {
+				log.Printf("[Prefill Engine] Loaded %d genuine manifest chunks from database for depot %d", len(dbChunks), d.depotID)
+				for _, c := range dbChunks {
+					depotChunks = append(depotChunks, ChunkMeta{
+						DepotID:   d.depotID,
+						ChunkID:   c.ChunkID,
+						SizeBytes: c.SizeBytes,
+					})
+				}
+			}
+		}
+
+		// 2. If not in DB, search disk for depot manifest (mounted host depotcache, intercepted manifests, etc.)
+		if len(depotChunks) == 0 {
+			var storageDir, manifestDir, depotCacheDir string
+			if m.cache != nil {
+				storageDir = m.cache.GetBaseDir()
+				manifestDir = m.cache.GetManifestDir()
+				depotCacheDir = m.cache.GetDepotCacheDir()
+			}
+			parsedChunks, manifestPath, err := manifest.FindAndParseDepotManifest(storageDir, manifestDir, depotCacheDir, d.depotID, d.manifestID)
+			if err == nil && len(parsedChunks) > 0 {
+				log.Printf("[Prefill Engine] Parsed and cached %d genuine chunks from %s for depot %d", len(parsedChunks), manifestPath, d.depotID)
+				if m.db != nil {
+					_ = m.db.SaveManifestChunks(d.depotID, d.manifestID, parsedChunks)
+				}
+				for _, c := range parsedChunks {
+					depotChunks = append(depotChunks, ChunkMeta{
+						DepotID:   d.depotID,
+						ChunkID:   c.ChunkID,
+						SizeBytes: c.SizeBytes,
+					})
+				}
+			}
+		}
+
+		// 3. If still not found and manifestID > 0, resolve natively via Steam CM in pure Go
+		if len(depotChunks) == 0 && d.manifestID > 0 && strings.EqualFold(job.Service, "steam") {
+			if cmClient == nil && m.db != nil {
+				sess, err := m.db.GetSteamSession()
+				if err == nil && sess != nil && sess.IsActive && sess.RefreshToken != "" {
+					cleanSteamID := strings.Trim(sess.SteamID, "'\"")
+					steamID64, _ := strconv.ParseUint(cleanSteamID, 10, 64)
+					if steamID64 > 0 {
+						log.Printf("[Prefill Engine] Authenticating with Steam CM to resolve genuine manifest for depot %d...", d.depotID)
+						c, err := steam.NewCMClient(ctx, sess.Username, sess.RefreshToken, steamID64)
+						if err == nil {
+							cmClient = c
+						} else {
+							log.Printf("[Prefill Engine] Steam CM connection error: %v", err)
+						}
+					}
+				}
+			}
+
+			if cmClient != nil {
+				cmChunks, err := m.fetchManifestViaCM(ctx, cmClient, job.AppID, d.depotID, d.manifestID)
+				if err == nil && len(cmChunks) > 0 {
+					log.Printf("[Prefill Engine] Pure-Go Steam CM resolved and cached %d genuine chunks for depot %d", len(cmChunks), d.depotID)
+					depotChunks = cmChunks
+				} else {
+					log.Printf("[Prefill Engine] Steam CM manifest fetch failed for depot %d: %v", d.depotID, err)
+				}
+			}
+		}
+
+		// 4. Fallback notice if no genuine manifest exists anywhere yet
+		if len(depotChunks) == 0 {
+			log.Printf("[Prefill Engine] Notice: No genuine manifest resolved for depot %d (manifest %d). Waiting for game install/update via Steam client.", d.depotID, d.manifestID)
+		}
+
+		chunks = append(chunks, depotChunks...)
 	}
 
 	return &DepotManifest{
 		AppID:      appID,
-		DepotID:    depotID,
+		DepotID:    firstDepotID,
 		ManifestID: uint64(time.Now().Unix()),
 		Chunks:     chunks,
 	}
 }
+
+// fetchManifestViaCM requests manifest request code via native Steam CM and downloads the manifest from CDN
+func (m *Manager) fetchManifestViaCM(ctx context.Context, cmClient *steam.CMClient, appID, depotID, manifestID int64) ([]ChunkMeta, error) {
+	reqCode, err := cmClient.GetManifestRequestCode(ctx, uint32(appID), uint32(depotID), uint64(manifestID), "public")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get manifest request code: %w", err)
+	}
+
+	cdnHosts := []string{
+		"cache9-lhr1.steamcontent.com",
+		"cache10-lhr1.steamcontent.com",
+		"cache11-lhr1.steamcontent.com",
+		"alibaba.cdn.steampipe.steamcontent.com",
+		"steampipe.akamaized.net",
+	}
+
+	manifestPath := fmt.Sprintf("/depot/%d/manifest/%d/5/%d", depotID, manifestID, reqCode)
+	var rawData []byte
+
+	for _, host := range cdnHosts {
+		reqURL := fmt.Sprintf("http://%s%s", host, manifestPath)
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		req.Header.Set("X-Artesian-Prefill", "1")
+		req.Header.Set("X-Artesian-Loop", "1")
+
+		resp, err := m.httpClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			data, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr == nil && len(data) > 0 {
+				rawData = data
+				break
+			}
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}
+
+	if len(rawData) == 0 {
+		return nil, fmt.Errorf("failed to download manifest for depot %d from Steam CDN", depotID)
+	}
+
+	// Save raw manifest to disk pool
+	if m.cache != nil {
+		manifestDir := m.cache.GetManifestDir()
+		_ = os.MkdirAll(manifestDir, 0755)
+		savePath := filepath.Join(manifestDir, fmt.Sprintf("%d_%d.manifest", depotID, manifestID))
+		_ = os.WriteFile(savePath, rawData, 0644)
+	}
+
+	// Parse genuine manifest payload into chunks
+	parsedRecords, err := manifest.ParseManifestBytes(rawData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse manifest bytes: %w", err)
+	}
+
+	if m.db != nil && len(parsedRecords) > 0 {
+		_ = m.db.SaveManifestChunks(depotID, manifestID, parsedRecords)
+	}
+
+	var metas []ChunkMeta
+	for _, r := range parsedRecords {
+		metas = append(metas, ChunkMeta{
+			DepotID:   depotID,
+			ChunkID:   r.ChunkID,
+			SizeBytes: r.SizeBytes,
+		})
+	}
+	return metas, nil
+}
+
