@@ -348,39 +348,6 @@ func FindAndParseDepotManifest(storageDir, manifestDir, depotCacheDir string, de
 		}
 	}
 
-	// 3. Scan cached files in storageDir/steam (e.g. manifests intercepted by the proxy)
-	cDir := filepath.Join(storageDir, "steam")
-	if _, err := os.Stat(cDir); err == nil {
-		var foundChunks []db.ManifestChunkRecord
-		var foundPath string
-		_ = filepath.Walk(cDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info == nil || info.IsDir() || info.Size() < 5000 {
-				return nil
-			}
-			data, rErr := os.ReadFile(path)
-			if rErr != nil {
-				return nil
-			}
-			// Strictly verify that the manifest belongs to requested depotID
-			candDepot, candGID, mErr := ExtractManifestDepotID(data)
-			if mErr == nil && candDepot == depotID {
-				if manifestID == 0 || candGID == manifestID {
-					chunks, pErr := ParseManifestBytes(data)
-					if pErr == nil && len(chunks) > 0 {
-						foundChunks = chunks
-						foundPath = path
-						return filepath.SkipAll
-					}
-				}
-			}
-			return nil
-		})
-		if len(foundChunks) > 0 {
-			log.Printf("[Manifest Parser] Extracted %d chunks from matching cached manifest at %s for depot %d", len(foundChunks), foundPath, depotID)
-			return foundChunks, foundPath, nil
-		}
-	}
-
 	return nil, "", fmt.Errorf("no valid manifest found on disk for depot %d (manifest %d)", depotID, manifestID)
 }
 
