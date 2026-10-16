@@ -177,6 +177,9 @@ func LoadFromDB(database *db.DB) *Config {
 		var cleaned []string
 		for _, p := range parts {
 			if s := strings.TrimSpace(p); s != "" {
+				if !strings.Contains(s, ":") {
+					s += ":53"
+				}
 				cleaned = append(cleaned, s)
 			}
 		}

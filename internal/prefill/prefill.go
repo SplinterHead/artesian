@@ -76,27 +76,64 @@ type Manager struct {
 	recorder   TrafficRecorder
 	jobs       map[string]*PrefillJob
 	jobsMu     sync.RWMutex
+
+	// Dynamic upstream DNS resolution
+	dnsMu        sync.RWMutex
+	upstreamAddr string
+}
+
+func (m *Manager) getUpstreamDNS() string {
+	m.dnsMu.RLock()
+	defer m.dnsMu.RUnlock()
+	return m.upstreamAddr
+}
+
+// SetUpstreamDNS dynamically updates the upstream DNS target for prefill downloads
+func (m *Manager) SetUpstreamDNS(upstreams []string) {
+	if len(upstreams) == 0 {
+		return
+	}
+	addr := strings.TrimSpace(upstreams[0])
+	if addr == "" {
+		return
+	}
+	if !strings.Contains(addr, ":") {
+		addr += ":53"
+	}
+	m.dnsMu.Lock()
+	m.upstreamAddr = addr
+	m.dnsMu.Unlock()
 }
 
 // NewManager initializes the prefill manager with direct upstream DNS resolution
 func NewManager(c *cache.Storage, database *db.DB, dnsCfg config.DNSConfig) *Manager {
+	m := &Manager{
+		cache:  c,
+		db:     database,
+		dnsCfg: dnsCfg,
+		jobs:   make(map[string]*PrefillJob),
+	}
+	if len(dnsCfg.UpstreamDNS) > 0 {
+		m.SetUpstreamDNS(dnsCfg.UpstreamDNS)
+	} else {
+		m.upstreamAddr = "1.1.1.1:53"
+	}
+
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
 
-	if len(dnsCfg.UpstreamDNS) > 0 {
-		upstreamAddr := dnsCfg.UpstreamDNS[0]
-		if !strings.Contains(upstreamAddr, ":") {
-			upstreamAddr += ":53"
-		}
-		dialer.Resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 5 * time.Second}
-				return d.DialContext(ctx, "udp", upstreamAddr)
-			},
-		}
+	dialer.Resolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			target := m.getUpstreamDNS()
+			if target == "" {
+				target = "1.1.1.1:53"
+			}
+			return d.DialContext(ctx, "udp", target)
+		},
 	}
 
 	transport := &http.Transport{
@@ -111,13 +148,8 @@ func NewManager(c *cache.Storage, database *db.DB, dnsCfg config.DNSConfig) *Man
 		DisableCompression:    true,
 	}
 
-	return &Manager{
-		cache:      c,
-		db:         database,
-		dnsCfg:     dnsCfg,
-		httpClient: &http.Client{Transport: transport, Timeout: 30 * time.Second},
-		jobs:       make(map[string]*PrefillJob),
-	}
+	m.httpClient = &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	return m
 }
 
 // SetTrafficRecorder connects prefill progress to the active download monitoring table

@@ -17,6 +17,7 @@ import (
 	"artesian/internal/cache"
 	"artesian/internal/config"
 	"artesian/internal/db"
+	"artesian/internal/dns"
 	"artesian/internal/manifest"
 	"artesian/internal/prefill"
 	"artesian/internal/proxy"
@@ -32,6 +33,7 @@ import (
 type Server struct {
 	cfg       config.ServerConfig
 	dnsCfg    *config.DNSConfig
+	dnsServer *dns.Server
 	cache     *cache.Storage
 	db        *db.DB
 	registry  *services.Registry
@@ -45,6 +47,7 @@ type Server struct {
 func NewServer(
 	cfg config.ServerConfig,
 	dnsCfg *config.DNSConfig,
+	dnsServer *dns.Server,
 	c *cache.Storage,
 	database *db.DB,
 	reg *services.Registry,
@@ -55,6 +58,7 @@ func NewServer(
 	return &Server{
 		cfg:       cfg,
 		dnsCfg:    dnsCfg,
+		dnsServer: dnsServer,
 		cache:     c,
 		db:        database,
 		registry:  reg,
@@ -184,12 +188,34 @@ func (s *Server) handleConfigDNS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(req.UpstreamDNS) > 0 {
-			s.dnsCfg.UpstreamDNS = req.UpstreamDNS
-			_ = s.db.SetSetting("dns_upstreams", strings.Join(req.UpstreamDNS, ","))
+			var cleaned []string
+			for _, u := range req.UpstreamDNS {
+				target := strings.TrimSpace(u)
+				if target == "" {
+					continue
+				}
+				if !strings.Contains(target, ":") {
+					target += ":53"
+				}
+				cleaned = append(cleaned, target)
+			}
+			if len(cleaned) > 0 {
+				s.dnsCfg.UpstreamDNS = cleaned
+				_ = s.db.SetSetting("dns_upstreams", strings.Join(cleaned, ","))
+				if s.proxy != nil {
+					s.proxy.SetUpstreamDNS(cleaned)
+				}
+				if s.prefill != nil {
+					s.prefill.SetUpstreamDNS(cleaned)
+				}
+			}
 		}
 		if req.InterceptIPv4 != "" {
 			s.dnsCfg.InterceptIPv4 = req.InterceptIPv4
 			_ = s.db.SetSetting("dns_intercept_ipv4", req.InterceptIPv4)
+		}
+		if s.dnsServer != nil {
+			s.dnsServer.UpdateConfig(s.dnsCfg.InterceptIPv4, s.dnsCfg.UpstreamDNS)
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"message":        "DNS configuration updated",
