@@ -31,6 +31,10 @@
           placeholder="127.0.0.1 or LAN IP (e.g. 192.168.1.100)"
         />
         <small class="text-muted">The IP address returned to LAN clients for game CDN hostnames to direct traffic to the reverse proxy.</small>
+        <div v-if="interceptIpInput === '127.0.0.1'" class="warning-callout mt-2">
+          <i class="fa-solid fa-triangle-exclamation mr-1"></i>
+          <span><strong>Notice:</strong> Currently set to loopback (<code>127.0.0.1</code>). For remote LAN devices to route through Artesian, enter the LAN IP of this server (e.g. <code>192.168.86.x</code>) so client machines don't redirect to their own localhost.</span>
+        </div>
       </div>
 
       <div class="form-actions mt-3">
@@ -158,5 +162,31 @@ defineEmits([
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: 0.2rem;
+}
+
+.warning-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  color: #fbbf24;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.warning-callout i {
+  margin-top: 0.15rem;
+  font-size: 0.95rem;
+  color: #f59e0b;
+}
+
+.warning-callout code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  color: #fef3c7;
 }
 </style>

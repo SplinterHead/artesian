@@ -92,14 +92,19 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	go sched.Start(ctx)
 
 	// 6. Launch DNS Interceptor & Forwarder
+	var dnsServer *dns.Server
 	if cfg.DNS.Enabled {
-		dnsServer := dns.NewServer(cfg.DNS, registry.AllDomains())
+		dnsServer = dns.NewServer(cfg.DNS, registry.AllDomains())
 		go func() {
 			if err := dnsServer.Start(ctx); err != nil {
 				log.Printf("[Artesian DNS] Server error: %v", err)
 			}
 		}()
 		defer dnsServer.Stop()
+
+		if cfg.DNS.InterceptIPv4 == "127.0.0.1" {
+			log.Println("[Artesian DNS] Notice: Intercept Target IP is set to 127.0.0.1. For remote LAN clients, configure your host LAN IP in Settings.")
+		}
 	}
 
 	// 7. Launch HTTP Caching Reverse Proxy Engine
@@ -113,7 +118,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	defer proxyServer.Close()
 
 	// 8. Launch Web Management UI & REST API
-	apiServer := api.NewServer(cfg.Server, &cfg.DNS, storage, database, registry, prefillMgr, sched, proxyServer)
+	apiServer := api.NewServer(cfg.Server, &cfg.DNS, dnsServer, storage, database, registry, prefillMgr, sched, proxyServer)
 	webHTTP := &http.Server{
 		Addr:         cfg.Server.ListenAddr,
 		Handler:      apiServer.Handler(),

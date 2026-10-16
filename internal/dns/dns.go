@@ -21,6 +21,22 @@ type Interceptor struct {
 	mu           sync.RWMutex
 }
 
+// normalizeUpstreams ensures all upstream DNS targets have an explicit port (:53 by default)
+func normalizeUpstreams(addrs []string) []string {
+	var cleaned []string
+	for _, a := range addrs {
+		s := strings.TrimSpace(a)
+		if s == "" {
+			continue
+		}
+		if !strings.Contains(s, ":") {
+			s += ":53"
+		}
+		cleaned = append(cleaned, s)
+	}
+	return cleaned
+}
+
 // NewInterceptor initializes a DNS interceptor with specified rules
 func NewInterceptor(cfg config.DNSConfig, patterns []string) *Interceptor {
 	ip := net.ParseIP(cfg.InterceptIPv4)
@@ -31,8 +47,44 @@ func NewInterceptor(cfg config.DNSConfig, patterns []string) *Interceptor {
 	return &Interceptor{
 		cfg:           cfg,
 		interceptIP:   ip,
-		upstreamAddrs: cfg.UpstreamDNS,
+		upstreamAddrs: normalizeUpstreams(cfg.UpstreamDNS),
 		patterns:      patterns,
+	}
+}
+
+// GetInterceptIP returns the current target IP thread-safely
+func (i *Interceptor) GetInterceptIP() net.IP {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.interceptIP
+}
+
+// GetUpstreamAddrs returns the current upstream resolvers thread-safely
+func (i *Interceptor) GetUpstreamAddrs() []string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	out := make([]string, len(i.upstreamAddrs))
+	copy(out, i.upstreamAddrs)
+	return out
+}
+
+// UpdateConfig dynamically updates the intercept IP and upstream resolvers
+func (i *Interceptor) UpdateConfig(interceptIP string, upstreams []string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if interceptIP != "" {
+		if ip := net.ParseIP(interceptIP); ip != nil {
+			i.interceptIP = ip
+			i.cfg.InterceptIPv4 = interceptIP
+			log.Printf("[Artesian DNS] Target Intercept IP updated to %s", ip)
+		}
+	}
+	cleanedUpstreams := normalizeUpstreams(upstreams)
+	if len(cleanedUpstreams) > 0 {
+		i.upstreamAddrs = cleanedUpstreams
+		i.cfg.UpstreamDNS = cleanedUpstreams
+		log.Printf("[Artesian DNS] Upstream DNS resolvers updated to %v", cleanedUpstreams)
 	}
 }
 
@@ -121,14 +173,22 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+// UpdateConfig dynamically updates intercept IP and upstream resolvers on the running server
+func (s *Server) UpdateConfig(interceptIP string, upstreams []string) {
+	if s != nil && s.interceptor != nil {
+		s.interceptor.UpdateConfig(interceptIP, upstreams)
+	}
+}
+
 // handleQuery processes or forwards the incoming DNS query packet
 func (s *Server) handleQuery(clientAddr net.Addr, packet []byte) {
 	domain, isQuery := extractQuestionDomain(packet)
 	if isQuery && s.interceptor.Matches(domain) {
+		targetIP := s.interceptor.GetInterceptIP()
 		log.Printf("[Artesian DNS -> Intercepted] %s queried %s -> Redirecting to %s",
-			clientAddr.String(), domain, s.interceptor.interceptIP)
+			clientAddr.String(), domain, targetIP)
 		
-		resp := buildSyntheticAResponse(packet, s.interceptor.interceptIP)
+		resp := buildSyntheticAResponse(packet, targetIP)
 		if len(resp) > 0 {
 			_, _ = s.conn.WriteTo(resp, clientAddr)
 			return
@@ -140,7 +200,8 @@ func (s *Server) handleQuery(clientAddr net.Addr, packet []byte) {
 }
 
 func (s *Server) forwardUpstream(clientAddr net.Addr, packet []byte) {
-	for _, upstream := range s.interceptor.upstreamAddrs {
+	upstreams := s.interceptor.GetUpstreamAddrs()
+	for _, upstream := range upstreams {
 		upAddr, err := net.ResolveUDPAddr("udp", upstream)
 		if err != nil {
 			continue

@@ -176,6 +176,10 @@ type Server struct {
 	logQueue chan dbLogEntry
 	closeCh  chan struct{}
 	wg       sync.WaitGroup
+
+	// Dynamic upstream DNS resolution
+	dnsMu        sync.RWMutex
+	upstreamAddr string
 }
 
 // isSelfOrLoopback checks if a host header targets Artesian itself
@@ -187,11 +191,50 @@ func isSelfOrLoopback(host string) bool {
 	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0" || h == "artesian" || h == "" || h == "lancache.steamcontent.com"
 }
 
+func (s *Server) getUpstreamDNS() string {
+	s.dnsMu.RLock()
+	defer s.dnsMu.RUnlock()
+	return s.upstreamAddr
+}
+
+// SetUpstreamDNS dynamically updates the upstream DNS target for proxy origin connections
+func (s *Server) SetUpstreamDNS(upstreams []string) {
+	if len(upstreams) == 0 {
+		return
+	}
+	addr := strings.TrimSpace(upstreams[0])
+	if addr == "" {
+		return
+	}
+	if !strings.Contains(addr, ":") {
+		addr += ":53"
+	}
+	s.dnsMu.Lock()
+	s.upstreamAddr = addr
+	s.dnsMu.Unlock()
+}
+
 // NewServer initializes the proxy engine
 func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage, database *db.DB, registry *services.Registry) *Server {
 	maxConns := cfg.MaxConnsPerHost
 	if maxConns <= 0 {
 		maxConns = 500
+	}
+
+	s := &Server{
+		cfg:             cfg,
+		dnsCfg:          dnsCfg,
+		cache:           c,
+		db:              database,
+		registry:        registry,
+		activeDownloads: make(map[string]*GameDownloadSession),
+		logQueue:        make(chan dbLogEntry, 5000),
+		closeCh:         make(chan struct{}),
+	}
+	if len(dnsCfg.UpstreamDNS) > 0 {
+		s.SetUpstreamDNS(dnsCfg.UpstreamDNS)
+	} else {
+		s.upstreamAddr = "1.1.1.1:53"
 	}
 
 	dialer := &net.Dialer{
@@ -200,18 +243,16 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 	}
 
 	// Route proxy DNS lookups to real upstream DNS to avoid local Docker loopback interception
-	if len(dnsCfg.UpstreamDNS) > 0 {
-		upstreamAddr := dnsCfg.UpstreamDNS[0]
-		if !strings.Contains(upstreamAddr, ":") {
-			upstreamAddr += ":53"
-		}
-		dialer.Resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 5 * time.Second}
-				return d.DialContext(ctx, "udp", upstreamAddr)
-			},
-		}
+	dialer.Resolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			target := s.getUpstreamDNS()
+			if target == "" {
+				target = "1.1.1.1:53"
+			}
+			return d.DialContext(ctx, "udp", target)
+		},
 	}
 
 	transport := &http.Transport{
@@ -226,18 +267,7 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true, // Critical: preserves byte-range chunks without decompressing
 	}
-
-	s := &Server{
-		cfg:             cfg,
-		dnsCfg:          dnsCfg,
-		cache:           c,
-		db:              database,
-		registry:        registry,
-		transport:       transport,
-		activeDownloads: make(map[string]*GameDownloadSession),
-		logQueue:        make(chan dbLogEntry, 5000),
-		closeCh:         make(chan struct{}),
-	}
+	s.transport = transport
 
 
 	// Singleton reusable reverse proxy with pooled transport
