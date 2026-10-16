@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/artesian.yaml", "Path to configuration file")
+	dbPathFlag := flag.String("db", "", "Path to SQLite database (default: /data/artesian.db or ./data/db/artesian.db)")
 	flag.Parse()
 
 	fmt.Println(`
@@ -36,19 +36,28 @@ func main() {
 Unified Game Cache & Delivery Architecture [Go + VueJS]
 	`)
 
-	// 1. Load Configuration
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		log.Fatalf("[Artesian] Configuration error: %v", err)
+	// 1. Determine Database Path
+	targetDB := *dbPathFlag
+	if targetDB == "" {
+		if _, err := os.Stat("/data"); err == nil {
+			targetDB = "/data/artesian.db"
+		} else if _, err := os.Stat("./data/db/artesian.db"); err == nil {
+			targetDB = "./data/db/artesian.db"
+		} else {
+			targetDB = "/data/artesian.db"
+		}
 	}
 
-	// 2. Initialize State Database
-	database, err := db.Open(cfg.Database.Path)
+	// 2. Initialize State Database (seeds defaults and scheduler rules on initial setup)
+	database, err := db.Open(targetDB)
 	if err != nil {
-		log.Fatalf("[Artesian] Database connection failure: %v", err)
+		log.Fatalf("[Artesian] Database connection failure (%s): %v", targetDB, err)
 	}
 	defer database.Close()
-	log.Printf("[Artesian] State database loaded (%s)", cfg.Database.Path)
+	log.Printf("[Artesian] State database loaded (%s)", targetDB)
+
+	// 3. Load Configuration from SQLite Database Settings
+	cfg := config.LoadFromDB(database)
 
 	// 3. Initialize Storage Layer
 	storage, err := cache.NewStorage(cfg.Cache)
@@ -74,7 +83,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	log.Println("[Artesian] Service registered: Xbox / Microsoft Store")
 
 	// 5. Initialize Prefill & Scheduler Subsystems
-	prefillMgr := prefill.NewManager(storage, database)
+	prefillMgr := prefill.NewManager(storage, database, cfg.DNS)
 	sched := scheduler.NewScheduler(cfg.Scheduler, database, prefillMgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,6 +104,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 
 	// 7. Launch HTTP Caching Reverse Proxy Engine
 	proxyServer := proxy.NewServer(cfg.Proxy, cfg.DNS, storage, database, registry)
+	prefillMgr.SetTrafficRecorder(proxyServer)
 	go func() {
 		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[Artesian Proxy] Fatal error: %v", err)

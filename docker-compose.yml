@@ -15,7 +15,8 @@ services:
     volumes:
       - ./data/cache:/data/cache
       - ./data/db:/data
-      - ./configs/artesian.example.yaml:/etc/artesian/artesian.yaml:ro
+      - ./data/manifests:/data/manifests
+      - ${HOME}/Library/Application Support/Steam/depotcache:/data/steam_depotcache:ro
     environment:
       - TZ=UTC
     ulimits:
