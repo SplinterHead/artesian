@@ -69,7 +69,12 @@ func NewCMClient(ctx context.Context, username, refreshToken string, steamID uin
 		HandshakeTimeout: 8 * time.Second,
 	}
 
-	for _, endpoint := range cmEndpoints {
+	maxAttempts := 3
+	if len(cmEndpoints) < maxAttempts {
+		maxAttempts = len(cmEndpoints)
+	}
+	for i := 0; i < maxAttempts; i++ {
+		endpoint := cmEndpoints[i]
 		wsURL := fmt.Sprintf("wss://%s/cmsocket/", endpoint)
 		headers := http.Header{"User-Agent": {"Valve/Steam HTTP Client 1.0"}}
 

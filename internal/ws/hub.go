@@ -167,21 +167,20 @@ func (c *Client) writePump() {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				return
 			}
-			_, _ = w.Write(message)
 
-			// Drain queued messages
+			// Drain any additional queued messages as individual frames
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				_, _ = w.Write([]byte{'\n'})
-				_, _ = w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
+				extraMsg, ok := <-c.send
+				if !ok {
+					return
+				}
+				if err := c.conn.WriteMessage(websocket.TextMessage, extraMsg); err != nil {
+					return
+				}
 			}
 		case <-ticker.C:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))

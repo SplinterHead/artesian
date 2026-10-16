@@ -69,11 +69,18 @@ export function useWebSocket(eventHandlers = {}) {
       };
 
       socket.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          dispatch(msg);
-        } catch (e) {
-          console.error('[WebSocket] Failed to parse message JSON:', e);
+        if (!event.data) return;
+        const text = typeof event.data === 'string' ? event.data : '';
+        const lines = text.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const msg = JSON.parse(trimmed);
+            dispatch(msg);
+          } catch (e) {
+            console.error('[WebSocket] Failed to parse message JSON:', e, trimmed);
+          }
         }
       };
     } catch (e) {
