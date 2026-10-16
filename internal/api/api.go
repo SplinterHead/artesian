@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"artesian/internal/cache"
 	"artesian/internal/config"
 	"artesian/internal/db"
+	"artesian/internal/manifest"
 	"artesian/internal/prefill"
 	"artesian/internal/proxy"
 	"artesian/internal/scheduler"
@@ -81,6 +85,11 @@ func (s *Server) Handler() http.Handler {
 	// Game Services Hub Endpoints (Steam, Epic, Blizzard, Riot, Xbox)
 	mux.HandleFunc("/api/v1/services", s.handleServices)
 	mux.HandleFunc("/api/v1/services/toggle", s.handleServiceToggle)
+	mux.HandleFunc("/api/v1/services/auto-update", s.handleServiceAutoUpdateToggle)
+	mux.HandleFunc("/api/v1/services/connect", s.handleServiceConnect)
+	mux.HandleFunc("/api/v1/services/disconnect", s.handleServiceDisconnect)
+	mux.HandleFunc("/api/v1/services/available-games", s.handleAvailableGames)
+	mux.HandleFunc("/api/v1/games/platforms", s.handleGamePlatforms)
 
 	// Phase 3: Steam Connection & Authentication Endpoints
 	mux.HandleFunc("/api/v1/steam/status", s.handleSteamStatus)
@@ -94,10 +103,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/prefill/jobs", s.handlePrefillJobs)
 	mux.HandleFunc("/api/v1/prefill/start", s.handlePrefillStart)
 
-	// Phase 5: Automation & PICS Endpoints
+	// Phase 5: Automation & Update Check Endpoints
 	mux.HandleFunc("/api/v1/scheduler/rules", s.handleSchedulerRules)
+	mux.HandleFunc("/api/v1/scheduler/check", s.handlePICSPoll)
 	mux.HandleFunc("/api/v1/scheduler/pics/poll", s.handlePICSPoll)
-	mux.HandleFunc("/api/v1/scheduler/pics/trigger", s.handlePICSTrigger)
+	mux.HandleFunc("/api/v1/updates/log", s.handleUpdateLogs)
 
 	// Embedded Vue/Vuetify SPA & Static Assets
 	fileServer := http.FileServer(web.Assets())
@@ -144,16 +154,30 @@ func (s *Server) handleConfigDNS(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		upstreams := s.dnsCfg.UpstreamDNS
 		if dbVal := s.db.GetSetting("dns_upstreams", ""); dbVal != "" {
-			upstreams = strings.Split(dbVal, ",")
+			parts := strings.Split(dbVal, ",")
+			var cleaned []string
+			for _, p := range parts {
+				if t := strings.TrimSpace(p); t != "" {
+					cleaned = append(cleaned, t)
+				}
+			}
+			if len(cleaned) > 0 {
+				upstreams = cleaned
+			}
+		}
+		interceptIP := s.dnsCfg.InterceptIPv4
+		if dbIP := s.db.GetSetting("dns_intercept_ipv4", ""); dbIP != "" {
+			interceptIP = dbIP
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"upstream_dns":   upstreams,
-			"intercept_ipv4": s.dnsCfg.InterceptIPv4,
+			"intercept_ipv4": interceptIP,
 			"enabled":        s.dnsCfg.Enabled,
 		})
 	case http.MethodPost:
 		var req struct {
-			UpstreamDNS []string `json:"upstream_dns"`
+			UpstreamDNS   []string `json:"upstream_dns"`
+			InterceptIPv4 string   `json:"intercept_ipv4"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid body", http.StatusBadRequest)
@@ -163,9 +187,14 @@ func (s *Server) handleConfigDNS(w http.ResponseWriter, r *http.Request) {
 			s.dnsCfg.UpstreamDNS = req.UpstreamDNS
 			_ = s.db.SetSetting("dns_upstreams", strings.Join(req.UpstreamDNS, ","))
 		}
+		if req.InterceptIPv4 != "" {
+			s.dnsCfg.InterceptIPv4 = req.InterceptIPv4
+			_ = s.db.SetSetting("dns_intercept_ipv4", req.InterceptIPv4)
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message":      "DNS configuration updated",
-			"upstream_dns": s.dnsCfg.UpstreamDNS,
+			"message":        "DNS configuration updated",
+			"upstream_dns":   s.dnsCfg.UpstreamDNS,
+			"intercept_ipv4": s.dnsCfg.InterceptIPv4,
 		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -177,14 +206,21 @@ func (s *Server) handleConfigStorage(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		baseDir := s.cache.GetBaseDir()
+		maxBytes := int64(2 * 1024 * 1024 * 1024 * 1024)
+		if maxStr := s.db.GetSetting("cache_max_size_bytes", ""); maxStr != "" {
+			if v, err := strconv.ParseInt(maxStr, 10, 64); err == nil && v > 0 {
+				maxBytes = v
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"storage_path":    baseDir,
-			"max_size_bytes":  2 * 1024 * 1024 * 1024 * 1024,
+			"max_size_bytes":  maxBytes,
 			"free_disk_bytes": 500 * 1024 * 1024 * 1024,
 		})
 	case http.MethodPost:
 		var req struct {
-			StoragePath string `json:"storage_path"`
+			StoragePath  string `json:"storage_path"`
+			MaxSizeBytes int64  `json:"max_size_bytes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid body", http.StatusBadRequest)
@@ -196,6 +232,9 @@ func (s *Server) handleConfigStorage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			_ = s.db.SetSetting("storage_path", req.StoragePath)
+		}
+		if req.MaxSizeBytes > 0 {
+			_ = s.db.SetSetting("cache_max_size_bytes", strconv.FormatInt(req.MaxSizeBytes, 10))
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"message":      "Storage path updated on the tank",
@@ -473,9 +512,12 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 			session.Platform = platform
 		}
 
+		if l.CreatedAt.Before(session.FirstSeen) {
+			session.FirstSeen = l.CreatedAt
+			session.Timestamp = l.CreatedAt.Format("15:04:05")
+		}
 		if l.CreatedAt.After(session.LastActive) {
 			session.LastActive = l.CreatedAt
-			session.Timestamp = l.CreatedAt.Format("15:04:05")
 		}
 
 		if depotID > 0 {
@@ -541,6 +583,7 @@ type ServiceItem struct {
 	Icon             string   `json:"icon"`
 	Status           string   `json:"status"` // "connected", "ready", "disabled", "planned"
 	InterceptEnabled bool     `json:"intercept_enabled"`
+	AutoUpdate       bool     `json:"auto_update"`
 	AuthSupported    bool     `json:"auth_supported"`
 	PrefillSupported bool     `json:"prefill_supported"`
 	Username         string   `json:"username,omitempty"`
@@ -555,6 +598,11 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	steamStatus := s.steam.Status()
+	var connectedCreds map[string]string
+	if s.db != nil {
+		connectedCreds, _ = s.db.GetConnectedCredentials()
+	}
+
 	servicesList := []ServiceItem{
 		{
 			ID:               "steam",
@@ -582,7 +630,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			Icon:             "⚡",
 			Status:           "ready",
 			InterceptEnabled: s.registry.IsEnabled("epic"),
-			AuthSupported:    false,
+			AuthSupported:    true,
 			PrefillSupported: false,
 			Domains: []string{
 				"*.download.epicgames.com",
@@ -597,7 +645,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			Icon:             "❄️",
 			Status:           "ready",
 			InterceptEnabled: s.registry.IsEnabled("blizzard"),
-			AuthSupported:    false,
+			AuthSupported:    true,
 			PrefillSupported: false,
 			Domains: []string{
 				"*.dist.blizzard.com",
@@ -613,7 +661,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			Icon:             "⚔️",
 			Status:           "ready",
 			InterceptEnabled: s.registry.IsEnabled("riot"),
-			AuthSupported:    false,
+			AuthSupported:    true,
 			PrefillSupported: false,
 			Domains: []string{
 				"*.dyn.riotcdn.net",
@@ -628,7 +676,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			Icon:             "🟢",
 			Status:           "ready",
 			InterceptEnabled: s.registry.IsEnabled("xbox"),
-			AuthSupported:    false,
+			AuthSupported:    true,
 			PrefillSupported: false,
 			Domains: []string{
 				"*.assets1.xboxlive.com",
@@ -638,9 +686,242 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	for i := range servicesList {
+		svc := &servicesList[i]
+		if s.db != nil {
+			svc.AutoUpdate = s.db.GetServiceAutoUpdate(svc.ID)
+		} else {
+			svc.AutoUpdate = true
+		}
+		if user, ok := connectedCreds[svc.ID]; ok && user != "" {
+			svc.Status = "connected"
+			svc.Username = user
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"services": servicesList,
 	})
+}
+
+func (s *Server) handleServiceConnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Service  string `json:"service"`
+		Username string `json:"username"`
+		Token    string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" || req.Username == "" {
+		http.Error(w, "Service and username are required", http.StatusBadRequest)
+		return
+	}
+	if s.db != nil {
+		_ = s.db.SetServiceCredential(req.Service, req.Username, req.Token)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":  "Credentials connected successfully",
+		"service":  req.Service,
+		"username": req.Username,
+	})
+}
+
+func (s *Server) handleServiceDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Service string `json:"service"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
+		http.Error(w, "Service is required", http.StatusBadRequest)
+		return
+	}
+	if req.Service == "steam" {
+		_ = s.steam.Logout()
+	}
+	if s.db != nil {
+		_ = s.db.RemoveServiceCredential(req.Service)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Service disconnected",
+		"service": req.Service,
+	})
+}
+
+type AvailableGame struct {
+	AppID     int64    `json:"app_id"`
+	Service   string   `json:"service"`
+	Name      string   `json:"name"`
+	Platforms []string `json:"platforms"`
+}
+
+func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	svc := strings.ToLower(r.URL.Query().Get("service"))
+	if svc == "" {
+		svc = "steam"
+	}
+
+	// Verify authentication for this service
+	isConnected := false
+	if svc == "steam" {
+		isConnected = s.steam.Status().HasValidAuth
+	}
+	if !isConnected && s.db != nil {
+		creds, _ := s.db.GetConnectedCredentials()
+		if _, ok := creds[svc]; ok {
+			isConnected = true
+		}
+	}
+
+	if !isConnected {
+		http.Error(w, fmt.Sprintf("Service %s is not authenticated", svc), http.StatusUnauthorized)
+		return
+	}
+
+	var games []AvailableGame
+	var privacyRestricted bool
+	var privacyHint string
+
+	switch svc {
+	case "steam":
+		res, err := s.steam.FetchAccountGames()
+		if err != nil {
+			log.Printf("[API] Failed to fetch Steam account games: %v", err)
+		} else if res != nil {
+			for _, g := range res.Games {
+				games = append(games, AvailableGame{
+					AppID:     g.AppID,
+					Service:   "steam",
+					Name:      g.Name,
+					Platforms: g.Platforms,
+				})
+			}
+			privacyRestricted = res.PrivacyRestricted
+			privacyHint = res.Hint
+		}
+	default:
+		games = s.getKnownGamesForService(svc)
+	}
+
+	if games == nil {
+		games = []AvailableGame{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"service":            svc,
+		"games":              games,
+		"privacy_restricted": privacyRestricted,
+		"hint":               privacyHint,
+	})
+}
+
+func (s *Server) handleGamePlatforms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	svc := r.URL.Query().Get("service")
+	appIDStr := r.URL.Query().Get("app_id")
+	appID, _ := strconv.ParseInt(appIDStr, 10, 64)
+	if appID <= 0 {
+		http.Error(w, "Invalid app_id", http.StatusBadRequest)
+		return
+	}
+
+	var name string
+	var platforms []string
+	if svc == "steam" || svc == "" {
+		name, platforms = s.steam.ResolveAppPlatforms(appID, "")
+	} else {
+		platforms = []string{"Windows"}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"app_id":    appID,
+		"service":   svc,
+		"name":      name,
+		"platforms": platforms,
+	})
+}
+
+func (s *Server) getKnownGamesForService(service string) []AvailableGame {
+	if s.db == nil {
+		return []AvailableGame{}
+	}
+	var games []AvailableGame
+	seen := make(map[int64]bool)
+
+	// Check watched_apps
+	apps, err := s.db.GetWatchedApps()
+	if err == nil {
+		for _, a := range apps {
+			if strings.EqualFold(a.Service, service) && !seen[a.AppID] {
+				seen[a.AppID] = true
+				var platforms []string
+				if a.Platform != "" {
+					parts := strings.Split(a.Platform, ",")
+					for _, p := range parts {
+						if t := strings.TrimSpace(p); t != "" {
+							platforms = append(platforms, t)
+						}
+					}
+				}
+				if len(platforms) == 0 {
+					platforms = []string{"Windows"}
+				}
+				games = append(games, AvailableGame{
+					AppID:     a.AppID,
+					Service:   service,
+					Name:      a.Name,
+					Platforms: platforms,
+				})
+			}
+		}
+	}
+
+	// Check game_meta_cache
+	if rows, err := s.db.Query("SELECT DISTINCT app_id, name, platform FROM game_meta_cache WHERE service = ? AND app_id > 0", service); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var appID int64
+			var name, platform string
+			if err := rows.Scan(&appID, &name, &platform); err == nil && !seen[appID] {
+				seen[appID] = true
+				var platforms []string
+				if platform != "" {
+					parts := strings.Split(platform, ",")
+					for _, p := range parts {
+						if t := strings.TrimSpace(p); t != "" {
+							platforms = append(platforms, t)
+						}
+					}
+				}
+				if len(platforms) == 0 {
+					platforms = []string{"Windows"}
+				}
+				games = append(games, AvailableGame{
+					AppID:     appID,
+					Service:   service,
+					Name:      name,
+					Platforms: platforms,
+				})
+			}
+		}
+	}
+
+	sort.Slice(games, func(i, j int) bool {
+		return strings.ToLower(games[i].Name) < strings.ToLower(games[j].Name)
+	})
+	return games
 }
 
 func (s *Server) handleServiceToggle(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +943,30 @@ func (s *Server) handleServiceToggle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":      req.ID,
 		"enabled": s.registry.IsEnabled(req.ID),
+	})
+}
+
+func (s *Server) handleServiceAutoUpdateToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ID         string `json:"id"`
+		AutoUpdate bool   `json:"auto_update"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if s.db != nil {
+		_ = s.db.SetServiceAutoUpdate(req.ID, req.AutoUpdate)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":          req.ID,
+		"auto_update": req.AutoUpdate,
 	})
 }
 
@@ -748,10 +1053,12 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, apps)
 	case http.MethodPost:
 		var req struct {
-			AppID      int64  `json:"app_id"`
-			Service    string `json:"service"`
-			Name       string `json:"name"`
-			AutoUpdate bool   `json:"auto_update"`
+			AppID            int64  `json:"app_id"`
+			Service          string `json:"service"`
+			Name             string `json:"name"`
+			Platform         string `json:"platform"`
+			AutoUpdate       *bool  `json:"auto_update"`
+			ReplacePlatforms bool   `json:"replace_platforms"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -760,14 +1067,64 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		if req.Service == "" {
 			req.Service = "steam"
 		}
+
+		var platformToSave string
+		if req.ReplacePlatforms {
+			platformToSave = req.Platform
+		} else {
+			var existingPlat string
+			if s.db != nil {
+				existingPlat, _ = s.db.GetWatchedAppPlatform(req.AppID, req.Service)
+			}
+			platformToSave = db.MergePlatformStrings(existingPlat, req.Platform)
+		}
+
+		autoUpdateVal := true
+		if req.AutoUpdate != nil {
+			autoUpdateVal = *req.AutoUpdate
+		} else if s.db != nil {
+			autoUpdateVal = s.db.GetServiceAutoUpdate(req.Service)
+		}
+
 		app := db.WatchedApp{
 			AppID:      req.AppID,
 			Service:    req.Service,
 			Name:       req.Name,
-			AutoUpdate: req.AutoUpdate,
-			Status:     "synced",
+			Platform:   platformToSave,
+			AutoUpdate: autoUpdateVal,
+			Status:     "prefilling",
 		}
 		_ = s.db.UpsertWatchedApp(app)
+
+		// Record persistent update log entry in SQLite
+		if s.db != nil {
+			logEntry := db.UpdateLogEntry{
+				AppID:        req.AppID,
+				Service:      req.Service,
+				GameTitle:    req.Name,
+				Status:       "Discovered",
+				Message:      fmt.Sprintf("Game added to managed library. Automated caching and prefill initiated for %s.", req.Name),
+				DiscoveredAt: time.Now(),
+			}
+			_ = s.db.AddUpdateLog(logEntry)
+			ws.GetHub().Broadcast("update:discovered", logEntry)
+		}
+
+		// Prefetch depot metadata in background if Steam
+		if s.db != nil && req.Service == "steam" {
+			go func(appID int64) {
+				_ = proxy.FetchRemoteSteamAppInfo(s.db, appID)
+			}(req.AppID)
+		}
+
+		// Automatically start caching the depot
+		if s.prefill != nil {
+			go func() {
+				s.prefill.CancelJobsForApp(req.Service, req.AppID)
+				_, _ = s.prefill.StartJob(context.Background(), req.Service, req.AppID, req.Name)
+			}()
+		}
+
 		writeJSON(w, http.StatusCreated, app)
 	case http.MethodDelete:
 		appIDStr := r.URL.Query().Get("app_id")
@@ -776,31 +1133,132 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 			service = "steam"
 		}
 		appID, _ := strconv.ParseInt(appIDStr, 10, 64)
-		if appID > 0 {
-			_ = s.db.DeleteWatchedApp(appID, service)
-		}
+		s.purgeGameData(service, appID)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message": "Game removed from library",
+			"message": "Game removed from library and cache purged",
+		})
+	case http.MethodPatch, http.MethodPut:
+		var req struct {
+			AppID      int64  `json:"app_id"`
+			Service    string `json:"service"`
+			AutoUpdate *bool  `json:"auto_update"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AppID <= 0 || req.AutoUpdate == nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.Service == "" {
+			req.Service = "steam"
+		}
+		if s.db != nil {
+			_ = s.db.UpdateWatchedAppAutoUpdate(req.AppID, req.Service, *req.AutoUpdate)
+		}
+		ws.GetHub().Broadcast("library:updated", map[string]interface{}{
+			"app_id":      req.AppID,
+			"service":     req.Service,
+			"auto_update": *req.AutoUpdate,
+		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"app_id":      req.AppID,
+			"service":     req.Service,
+			"auto_update": *req.AutoUpdate,
 		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
+// purgeGameData purges all disk chunks, manifests, and database records for an app or service
+func (s *Server) purgeGameData(service string, appID int64) {
+	if service == "" {
+		service = "steam"
+	}
+
+	// a) Cancel any active downloads (prefill engine and proxy active download sessions)
+	if s.prefill != nil {
+		s.prefill.CancelJobsForApp(service, appID)
+	}
+	if s.proxy != nil {
+		s.proxy.CancelActiveDownloadsForApp(service, appID)
+	}
+
+	// b) Delete associated chunks and manifests on disk and in database
+	var depotIDs []int64
+	var chunkPaths []string
+	if s.db != nil {
+		depotIDs, _ = s.db.GetDepotIDsForApp(appID, service)
+		chunkPaths, _ = s.db.GetChunkPathsForApp(appID, service)
+	}
+
+	// 1. Remove individual chunk files from disk
+	for _, p := range chunkPaths {
+		if p != "" {
+			_ = os.Remove(p)
+		}
+	}
+
+	// 2. Remove depot chunk directories from cache storage
+	if s.cache != nil {
+		for _, dID := range depotIDs {
+			_ = s.cache.DeleteDepot(service, dID)
+		}
+	}
+
+	// 3. Remove manifest files from disk (.manifest files)
+	storageDir := "/data/cache"
+	if s.cache != nil {
+		storageDir = s.cache.GetBaseDir()
+	}
+	for _, dID := range depotIDs {
+		_ = manifest.DeleteManifestFiles(storageDir, dID)
+	}
+
+	// 4. Delete records from database (depot_manifest_chunks, chunk_cache, watched_apps, depot_meta_cache)
+	if s.db != nil {
+		_ = s.db.DeleteChunksAndManifestsForApp(appID, service)
+	}
+
+	// 5. Broadcast updates over WebSocket
+	ws.GetHub().Broadcast("library:updated", map[string]interface{}{
+		"deleted_app_id": appID,
+		"service":        service,
+	})
+	if s.db != nil {
+		stats, err := s.db.GetStats()
+		if err == nil {
+			ws.GetHub().Broadcast("stats:updated", stats)
+		}
+	}
+
+	log.Printf("[Library] Purged game %d (%s): cancelled active downloads and purged cached chunks/manifests", appID, service)
+}
+
 func (s *Server) handleCachedLibrary(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		games, err := s.db.GetInterceptedGames()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if games == nil {
+			games = []db.InterceptedGame{}
+		}
+		writeJSON(w, http.StatusOK, games)
+	case http.MethodDelete:
+		appIDStr := r.URL.Query().Get("app_id")
+		service := r.URL.Query().Get("service")
+		if service == "" {
+			service = "steam"
+		}
+		appID, _ := strconv.ParseInt(appIDStr, 10, 64)
+		s.purgeGameData(service, appID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message": "Cached game and content purged",
+		})
+	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	games, err := s.db.GetInterceptedGames()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if games == nil {
-		games = []db.InterceptedGame{}
-	}
-	writeJSON(w, http.StatusOK, games)
 }
 
 // Phase 4: Prefill Handlers
@@ -831,7 +1289,7 @@ func (s *Server) handlePrefillStart(w http.ResponseWriter, r *http.Request) {
 		req.Service = "steam"
 	}
 
-	job, err := s.prefill.StartJob(r.Context(), req.Service, req.AppID, req.AppName)
+	job, err := s.prefill.StartJob(context.Background(), req.Service, req.AppID, req.AppName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -875,31 +1333,33 @@ func (s *Server) handlePICSPoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	go s.scheduler.PollPICS()
+	go s.scheduler.CheckSteamUpdates()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "PICS change polling dispatched",
+		"message": "Steam update check dispatched",
 	})
 }
 
-func (s *Server) handlePICSTrigger(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+func (s *Server) handleUpdateLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	appIDStr := r.URL.Query().Get("app_id")
-	appID, _ := strconv.ParseInt(appIDStr, 10, 64)
-	if appID == 0 {
-		appID = 730 // Default to CS2
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
 	}
-
-	if err := s.scheduler.TriggerPICSUpdate(appID); err != nil {
+	logs, err := s.db.GetUpdateLogs(limit)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
+	if logs == nil {
+		logs = []db.UpdateLogEntry{}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": fmt.Sprintf("Triggered PICS update detection and prefill for App ID %d", appID),
+		"logs": logs,
 	})
 }
 

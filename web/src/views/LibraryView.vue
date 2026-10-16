@@ -1,40 +1,5 @@
 <template>
   <div class="tab-view">
-    <!-- Active Prefill Banner -->
-    <div v-if="activePrefillJob" class="card active-job-card mb-4">
-      <div class="job-header">
-        <div>
-          <span class="badge badge-accent">PREFILL ACTIVE</span>
-          <h2 class="mt-1">{{ activePrefillJob.app_name }}</h2>
-          <span class="text-muted">App ID: {{ activePrefillJob.app_id }} • Depot Sync</span>
-        </div>
-        <div class="job-metrics">
-          <div class="metric-block">
-            <span class="metric-label">Transfer Speed</span>
-            <span class="metric-val text-green">{{ activePrefillJob.speed_mbps ? activePrefillJob.speed_mbps.toFixed(1) : 0 }} Mbps</span>
-          </div>
-          <div class="metric-block">
-            <span class="metric-label">Remaining Time</span>
-            <span class="metric-val text-accent">{{ formatETA(activePrefillJob.eta_seconds) }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Animated Progress Bar -->
-      <div class="progress-container mt-3">
-        <div class="progress-track">
-          <div 
-            class="progress-fill" 
-            :style="{ width: (activePrefillJob.progress_pct || 0) + '%' }"
-          ></div>
-        </div>
-        <div class="progress-details mt-2">
-          <span>{{ activePrefillJob.status.toUpperCase() }}: {{ activePrefillJob.downloaded_chunks + activePrefillJob.existing_chunks }} / {{ activePrefillJob.total_chunks }} chunks</span>
-          <span class="font-bold text-accent">{{ (activePrefillJob.progress_pct || 0).toFixed(1) }}%</span>
-        </div>
-      </div>
-    </div>
-
     <!-- Table 1: Monitored Game Library -->
     <div class="card mb-4">
       <div class="card-header">
@@ -52,10 +17,10 @@
           <thead>
             <tr>
               <th style="width: 50px;">Store</th>
-              <th>App ID</th>
-              <th>Game Name</th>
+              <th>Title</th>
               <th>Status</th>
               <th>Auto-Update</th>
+              <th>Size</th>
               <th>Last Sync</th>
               <th>Actions</th>
             </tr>
@@ -84,35 +49,54 @@
                   <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
                 </div>
               </td>
-              <td><code>{{ game.app_id }}</code></td>
-              <td><strong>{{ game.name }}</strong></td>
+              <td>
+                <div class="game-cell">
+                  <strong>{{ game.name }}</strong>
+                  <span v-if="game.platform" class="platform-tags-wrap">
+                    <span 
+                      v-for="p in getPlatformList(game.platform)" 
+                      :key="p" 
+                      class="platform-tag" 
+                      :title="p"
+                    >
+                      <i :class="getPlatformIcon(p)"></i>
+                    </span>
+                  </span>
+                </div>
+              </td>
               <td>
                 <span :class="['status-badge', game.status]">
                   {{ game.status.toUpperCase() }}
                 </span>
               </td>
               <td>
-                <span class="badge" :class="game.auto_update ? 'badge-hit' : 'badge-secondary'">
-                  {{ game.auto_update ? 'ENABLED' : 'OFF' }}
-                </span>
+                <button 
+                  type="button"
+                  class="badge-toggle-btn"
+                  :title="'Click to turn ' + (game.auto_update ? 'off' : 'on') + ' auto-update for this title'"
+                  @click="$emit('toggle-game-autoupdate', game)"
+                >
+                  <span class="badge" :class="game.auto_update ? 'badge-hit' : 'badge-secondary'">
+                    {{ game.auto_update ? 'ENABLED' : 'OFF' }}
+                  </span>
+                </button>
+              </td>
+              <td>
+                <div class="size-cell">
+                  <span class="depot-size">{{ formatBytes(game.size_bytes) }}</span>
+                </div>
               </td>
               <td class="text-muted">{{ formatDate(game.last_checked) }}</td>
               <td>
                 <div class="table-actions">
                   <button 
-                    class="btn btn-xs btn-primary"
-                    :disabled="activePrefillJob && activePrefillJob.status === 'downloading'"
-                    title="Initialize full depot prefill"
-                    @click="$emit('trigger-prefill', game)"
-                  >
-                    ⚡ Initialize
-                  </button>
-                  <button 
                     class="btn btn-xs btn-outline-danger"
+                    :disabled="deletingKey === getGameKey(game)"
                     title="Remove game from library"
                     @click="$emit('remove-from-library', game)"
                   >
-                    <i class="fa-solid fa-trash"></i>
+                    <i v-if="deletingKey === getGameKey(game)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i v-else class="fa-solid fa-trash"></i>
                   </button>
                 </div>
               </td>
@@ -140,16 +124,16 @@
             <tr>
               <th style="width: 50px;">Store</th>
               <th>App ID</th>
-              <th>Game Title</th>
-              <th>Cached Content</th>
-              <th>Last Intercepted</th>
+              <th>Title</th>
+              <th>Size</th>
+              <th>Last Requested</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="cachedGames.length === 0">
               <td colspan="6" class="empty-cell">
-                No unmanaged games in cache yet. Traffic intercepted from Steam, Epic, or Battle.net will appear here automatically.
+                No games cached yet, they'll appear here when you start downloading in Steam or Epic Games
               </td>
             </tr>
             <tr v-for="item in cachedGames" :key="(item.service || 'steam') + item.app_id + item.name">
@@ -190,13 +174,24 @@
               </td>
               <td class="text-muted">{{ formatDate(item.last_seen) }}</td>
               <td>
-                <button 
-                  class="btn btn-xs btn-primary add-library-btn"
-                  title="Add this intercepted game to your managed library"
-                  @click="$emit('add-to-library', item)"
-                >
-                  <i class="fa-solid fa-plus mr-1"></i> Add to Library
-                </button>
+                <div class="table-actions">
+                  <button 
+                    class="btn btn-xs btn-primary add-library-btn"
+                    title="Add this intercepted game to your managed library"
+                    @click="$emit('add-to-library', item)"
+                  >
+                    <i class="fa-solid fa-plus mr-1"></i> Add to Library
+                  </button>
+                  <button 
+                    class="btn btn-xs btn-outline-danger"
+                    :disabled="deletingKey === getGameKey(item)"
+                    title="Delete cached game and purge chunks"
+                    @click="$emit('delete-cached-game', item)"
+                  >
+                    <i v-if="deletingKey === getGameKey(item)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i v-else class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -209,10 +204,10 @@
 <script setup>
 import { 
   formatBytes, 
-  formatETA, 
   formatDate, 
   getLogoKey, 
-  getPlatformIcon 
+  getPlatformIcon,
+  getPlatformList
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -225,67 +220,32 @@ defineProps({
     type: Array,
     default: () => [],
   },
-  activePrefillJob: {
-    type: Object,
+  deletingKey: {
+    type: String,
     default: null,
   },
 });
 
-defineEmits(['open-add-game', 'trigger-prefill', 'add-to-library', 'remove-from-library', 'refresh-cached']);
+defineEmits(['open-add-game', 'trigger-prefill', 'add-to-library', 'remove-from-library', 'refresh-cached', 'delete-cached-game', 'toggle-game-autoupdate']);
+
+function getGameKey(game) {
+  if (!game) return '';
+  return `${game.service || 'steam'}:${game.app_id || 0}:${game.name || ''}`;
+}
 </script>
 
 <style scoped>
-.active-job-card {
-  background: linear-gradient(135deg, #111e33, #0f172a);
-  border-color: var(--accent);
-  box-shadow: 0 0 20px rgba(56, 189, 248, 0.15);
+.badge-toggle-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  outline: none;
 }
 
-.job-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.job-metrics {
-  display: flex;
-  gap: 1.5rem;
-}
-
-.metric-block {
-  display: flex;
-  flex-direction: column;
-  text-align: right;
-}
-
-.metric-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.metric-val {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.progress-track {
-  width: 100%;
-  height: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-green));
-  transition: width 0.3s ease;
-}
-
-.progress-details {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.85rem;
+.badge-toggle-btn:hover .badge {
+  opacity: 0.85;
+  transform: scale(1.05);
 }
 
 .empty-cell {
@@ -321,6 +281,13 @@ defineEmits(['open-add-game', 'trigger-prefill', 'add-to-library', 'remove-from-
   color: var(--text-primary);
   border-color: rgba(255, 255, 255, 0.25);
   background: rgba(30, 41, 59, 0.9);
+}
+
+.platform-tags-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
 }
 
 .size-cell {
