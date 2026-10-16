@@ -4,16 +4,15 @@
     title="Steam CM Authentication" 
     @update:model-value="$emit('update:modelValue', $event)"
   >
-    <p class="text-muted mb-3">
-      Authenticate with the Steam Connection Manager to enable manifest decryption and headless prefilling.
-    </p>
     <div class="form-group mb-3">
       <label>Steam Account Name:</label>
       <input 
         type="text" 
         class="form-control" 
         v-model="username" 
-        placeholder="username" 
+        placeholder="Username" 
+        :disabled="loading"
+        @keyup.enter="handleSubmit"
       />
     </div>
     <div class="form-group mb-3">
@@ -23,18 +22,33 @@
         class="form-control" 
         v-model="password" 
         placeholder="••••••••" 
+        :disabled="loading"
         @keyup.enter="handleSubmit"
       />
     </div>
 
     <template #footer>
-      <button class="btn btn-secondary" @click="$emit('update:modelValue', false)">Cancel</button>
       <button 
-        class="btn btn-primary" 
-        :disabled="loading || !username || !password" 
+        type="button"
+        class="btn btn-outline-secondary" 
+        :disabled="loading"
+        @click="$emit('update:modelValue', false)"
+      >
+        Cancel
+      </button>
+      <button 
+        type="button"
+        class="btn btn-primary btn-steam-connect" 
+        :disabled="loading || !username.trim() || !password" 
         @click="handleSubmit"
       >
-        {{ loading ? 'Connecting...' : 'Connect to Steam' }}
+        <template v-if="loading">
+          <i class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+          <span>Connecting to Steam...</span>
+        </template>
+        <template v-else>
+          <span>Connect to Steam</span>
+        </template>
       </button>
     </template>
   </BaseModal>
@@ -68,7 +82,17 @@ watch(() => props.modelValue, (val) => {
 });
 
 function handleSubmit() {
-  if (!username.value || !password.value) return;
-  emit('submit', { username: username.value, password: password.value });
+  if (props.loading || !username.value.trim() || !password.value) return;
+  emit('submit', { username: username.value.trim(), password: password.value });
 }
 </script>
+
+<style scoped>
+.btn-steam-connect {
+  min-width: 175px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+</style>
