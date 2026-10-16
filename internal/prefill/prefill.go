@@ -164,10 +164,15 @@ func (m *Manager) StartJob(ctx context.Context, service string, appID int64, app
 	var platform string
 	if m.db != nil {
 		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = ? LIMIT 1", appID, service).Scan(&platform)
+		if appName == "" {
+			_ = m.db.QueryRow("SELECT COALESCE(name, '') FROM watched_apps WHERE app_id = ? AND service = ? LIMIT 1", appID, service).Scan(&appName)
+		}
 	}
 	if platform == "" {
 		platform = "PC"
 	}
+
+	m.CancelJobsForApp(service, appID)
 
 	m.jobsMu.Lock()
 	jobID := fmt.Sprintf("%s-%d-%d", service, appID, time.Now().Unix())
@@ -188,13 +193,9 @@ func (m *Manager) StartJob(ctx context.Context, service string, appID int64, app
 
 	// Update watched app status in SQLite
 	if m.db != nil {
-		_ = m.db.UpsertWatchedApp(db.WatchedApp{
-			AppID:   appID,
-			Service: service,
-			Name:    appName,
-			Status:  "prefilling",
-		})
+		_ = m.db.UpdateWatchedAppStatus(appID, service, "prefilling")
 	}
+	ws.GetHub().Broadcast("library:updated", nil)
 
 	go m.runPrefill(jobCtx, job)
 	return job, nil
@@ -494,13 +495,9 @@ func (m *Manager) downloadChunk(appID, depotID int64, chunk ChunkMeta) {
 
 func (m *Manager) finalizeAppStatus(appID int64, service, name, status string) {
 	if m.db != nil {
-		_ = m.db.UpsertWatchedApp(db.WatchedApp{
-			AppID:   appID,
-			Service: service,
-			Name:    name,
-			Status:  status,
-		})
+		_ = m.db.UpdateWatchedAppStatus(appID, service, status)
 	}
+	ws.GetHub().Broadcast("library:updated", nil)
 }
 
 func (m *Manager) broadcastProgress(job *PrefillJob) {
