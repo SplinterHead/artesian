@@ -60,7 +60,7 @@
               </td>
               <td class="col-title">
                 <div class="game-cell">
-                  <strong>{{ game.name }}</strong>
+                  <strong class="game-title-text" :title="game.name">{{ game.name }}</strong>
                   <span v-if="game.platform" class="platform-tags-wrap">
                     <span 
                       v-for="p in getPlatformList(game.platform)" 
@@ -137,12 +137,10 @@
       </div>
 
       <div class="table-wrap">
-        <table class="data-table library-table">
+        <table class="data-table cached-table">
           <colgroup>
             <col class="col-store" />
             <col class="col-title" />
-            <col class="col-status" />
-            <col class="col-autoupdate" />
             <col class="col-size" />
             <col class="col-sync" />
             <col class="col-actions" />
@@ -151,8 +149,6 @@
             <tr>
               <th class="col-store">Store</th>
               <th class="col-title">Title</th>
-              <th class="col-status text-muted">Status</th>
-              <th class="col-autoupdate text-muted">Auto-Update</th>
               <th class="col-size">Size</th>
               <th class="col-sync">Last Requested</th>
               <th class="col-actions">Actions</th>
@@ -160,7 +156,7 @@
           </thead>
           <tbody>
             <tr v-if="cachedGames.length === 0">
-              <td colspan="7" class="empty-cell">
+              <td colspan="5" class="empty-cell">
                 No games cached yet, they'll appear here when you start downloading in Steam or Epic Games
               </td>
             </tr>
@@ -184,7 +180,7 @@
               </td>
               <td class="col-title">
                 <div class="game-cell">
-                  <strong>{{ item.name }}</strong>
+                  <strong class="game-title-text" :title="item.name">{{ item.name }}</strong>
                   <span v-if="item.platform" class="platform-tags-wrap">
                     <span 
                       v-for="p in getPlatformList(item.platform)" 
@@ -197,8 +193,6 @@
                   </span>
                 </div>
               </td>
-              <td class="col-status text-muted">—</td>
-              <td class="col-autoupdate text-muted">—</td>
               <td class="col-size">
                 <div class="size-cell">
                   <span class="depot-size">{{ formatBytes(item.cached_bytes) }}</span>
@@ -295,7 +289,16 @@ function getGameKey(game) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.game-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 280px;
 }
 
 .platform-tag {
@@ -311,6 +314,7 @@ function getGameKey(game) {
   border-radius: 5px;
   transition: all 0.2s ease;
   cursor: default;
+  flex-shrink: 0;
 }
 
 .platform-tag:hover {
@@ -323,23 +327,27 @@ function getGameKey(game) {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .size-cell {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .depot-size {
   font-family: var(--font-mono, monospace);
   font-weight: 600;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-.library-table {
+.library-table,
+.cached-table {
   table-layout: fixed;
   width: 100%;
 }
@@ -354,23 +362,25 @@ function getGameKey(game) {
 }
 
 .col-status {
-  width: 130px;
-}
-
-.col-autoupdate {
   width: 120px;
 }
 
-.col-size {
+.col-autoupdate {
   width: 110px;
 }
 
+.col-size {
+  width: 100px;
+  white-space: nowrap;
+}
+
 .col-sync {
-  width: 145px;
+  width: 185px;
+  white-space: nowrap;
 }
 
 .col-actions {
-  width: 85px;
+  width: 80px;
   text-align: right;
 }
 
