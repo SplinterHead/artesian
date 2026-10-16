@@ -517,8 +517,11 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		var depotCount int
 		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0", appID).Scan(&depotCount)
 		if depotCount == 0 {
+			log.Printf("[Prefill Engine] App %d (%s): No depots in local database, querying remote SteamCMD metadata...", appID, job.AppName)
 			if err := proxy.FetchRemoteSteamAppInfo(m.db, appID); err != nil {
 				log.Printf("[Prefill Engine] Could not fetch remote depot metadata for app %d: %v", appID, err)
+			} else {
+				log.Printf("[Prefill Engine] App %d (%s): Remote depot metadata query completed successfully", appID, job.AppName)
 			}
 		}
 	}
@@ -609,6 +612,7 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 	if len(activeDepots) == 0 {
 		activeDepots = allDepots
 	}
+	log.Printf("[Prefill Engine] App %d (%s): Evaluating %d depots matching target platform '%s'", appID, job.AppName, len(activeDepots), targetPlatform)
 
 	var chunks []ChunkMeta
 	firstDepotID := appID
@@ -670,11 +674,13 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		if len(depotChunks) == 0 && d.manifestID > 0 && strings.EqualFold(job.Service, "steam") {
 			if cmClient == nil && m.db != nil {
 				sess, err := m.db.GetSteamSession()
-				if err == nil && sess != nil && sess.IsActive && sess.RefreshToken != "" {
+				if err != nil || sess == nil || !sess.IsActive || sess.RefreshToken == "" {
+					log.Printf("[Prefill Engine] Depot %d (manifest %d): No active Steam session in database, skipping native Steam CM request", d.depotID, d.manifestID)
+				} else {
 					cleanSteamID := strings.Trim(sess.SteamID, "'\"")
 					steamID64, _ := strconv.ParseUint(cleanSteamID, 10, 64)
 					if steamID64 > 0 {
-						log.Printf("[Prefill Engine] Authenticating with Steam CM to resolve genuine manifest for depot %d...", d.depotID)
+						log.Printf("[Prefill Engine] Authenticating with Steam CM to resolve genuine manifest for depot %d (manifest %d)...", d.depotID, d.manifestID)
 						c, err := steam.NewCMClient(ctx, sess.Username, sess.RefreshToken, steamID64)
 						if err == nil {
 							cmClient = c
