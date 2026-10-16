@@ -3,10 +3,11 @@
 The management console and control center for Artesian.
 
 ## Features
-- **Real-time Telemetry:** Cache hit ratio, bandwidth saved, upstream miss count, active connections.
-- **Service Hub:** Toggle and configure game platforms (Steam, Epic Games, Blizzard, Riot, Xbox) and view intercepted domain patterns.
-- **Cache Prefill & Warm-up:** Trigger fresh initialisations, monitor chunk download pipelines, and see per-game sync status.
-- **Scheduler & Cron Timers:** Manage background update checks and retention windows.
+- **Real-time Telemetry & Active Downloads:** Cache hit ratio, bandwidth saved, active connection rates, and live downloads table with custom client badges (e.g., `Artesian`), mini progress bars, and clickable SteamDB depot links.
+- **Game Library & Interactive Filter Modal:** Manage watched titles. The Add Game modal turns into a live search filter input upon opening, offering keyboard navigation across hundreds of authentic owned games.
+- **Accounts & Modules Hub:** Authenticate with Steam via Connection Manager WebSockets and 2FA, toggle game platforms (Steam, Epic Games, Blizzard, Riot, Xbox), and view intercepted CDN domain patterns.
+- **Automatic Depot Prefill:** Automatically warm the local tank storage with depot chunks upon adding games to your library.
+- **Scheduler & Automation:** Automated Steam PICS polling and customizable cron update schedules.
 
 ## Development
 

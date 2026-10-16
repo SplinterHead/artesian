@@ -45,14 +45,28 @@ Upstream DNS           Redirect to Artesian          Zero-Copy Stream        Fet
 - Pluggable platform abstractions for game networks (Steam, Epic Games, Battle.net, Riot, Xbox).
 - Handles domain pattern resolution, chunk URL patterns, and depot layout rules.
 
-### 1.4. Prefill & Cache Warming Engine (`internal/prefill`)
-- Allows users to initialize and pre-populate local game depots before LAN events or client downloads.
-- Coordinates manifest downloads and missing chunk fetching.
+### 1.4. Steam Authentication & Account Client (`internal/steam`)
+- Direct WebSocket connection to Steam Connection Manager (CM) servers.
+- Handles user authentication, Steam Guard mobile/email 2FA code verification, and persistent session restoration from SQLite.
+- Integrates with the Steam Web API (`IPlayerService/GetOwnedGames/v1`) using the authenticated user token to pull genuine game libraries, App IDs, and supported platforms (Windows, Mac, Linux).
 
-### 1.5. Automated Scheduler (`internal/scheduler`)
+### 1.5. Prefill & Auto-Depot Caching Engine (`internal/prefill`)
+- Automatically triggered upon adding games to the library.
+- Retrieves depot manifests, hashes chunk identities, and executes rapid delta-diffing against local SQLite records.
+- Concurrently downloads missing chunks into content-addressable storage using an internal worker pool.
+- Implements the `TrafficRecorder` interface to pipe live byte transfers, depot IDs, and completion events directly into the proxy's active download session monitor.
+
+### 1.6. Active Download Tracking & WebSocket Hub (`internal/proxy`, `internal/ws`)
+- Tracks ongoing client downloads and internal prefill operations in memory (`GameDownloadSession`).
+- Differentiates internal prefill tasks by tagging `Client = "Artesian"`.
+- Streams real-time progress via WebSocket events (`proxy:download_update`, `proxy:download_removed`).
+- Automatically prunes completed sessions after a 3-5 second grace period to ensure the 100% completion state is visible to users before dismissal.
+
+### 1.7. Automated Scheduler (`internal/scheduler`)
 - Evaluates cron expressions for background update checks.
 - Periodically queries platform APIs for patch updates to watched titles and triggers delta warming jobs.
 
-### 1.6. Control API & Web UI (`internal/api`, `web/`)
-- Embeds a modern Vue 3 interface.
-- Exposes REST endpoints for configuration, manual prefill triggers, telemetry, and live stats.
+### 1.8. Control API & Web UI (`internal/api`, `web/`)
+- Embeds a modern Vue 3 interface compiled with Vite.
+- Includes the interactive Game Add modal featuring an adaptive text filter input, keyboard navigation, and platform selectors.
+- Displays live throughput, cache hit ratios, bandwidth savings, and the real-time Active Downloads monitor.
