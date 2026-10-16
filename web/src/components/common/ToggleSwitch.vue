@@ -39,10 +39,11 @@ defineEmits(['update:modelValue', 'change']);
 
 <style scoped>
 .toggle-wrapper {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.35rem;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .toggle-status-label {
