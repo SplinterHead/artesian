@@ -119,10 +119,9 @@ This file provides critical architectural context, developer guidelines, convent
   - `manifest.ParseManifestBytes` extracts genuine 40-character SHA-1 chunk hashes and true sizes directly.
   - Manifests are resolved from:
     1. SQLite indexed cache: `depot_manifest_chunks` (`depot_id`, `manifest_id`, `chunk_id`, `size_bytes`).
-    2. Host Steam depotcache mounted read-only at `/data/steam_depotcache/`.
-    3. Artesian manifest pool at `/data/manifests/` and `/data/cache/manifests/`.
-    4. Proxy intercepted live manifests from `/depot/<depot_id>/manifest/<manifest_id>/...`.
-    5. Native pure-Go Steam CM WebSocket engine (`internal/steam/cm.go`) querying RPC `ContentServerDirectory.GetManifestRequestCode` on demand.
+    2. Artesian manifest pool at `/data/manifests/` and `/data/cache/manifests/`.
+    3. Proxy intercepted live manifests from `/depot/<depot_id>/manifest/<manifest_id>/...`.
+    4. Native pure-Go Steam CM WebSocket engine (`internal/steam/cm.go`) querying RPC `ContentServerDirectory.GetManifestRequestCode` on demand.
 - **Headless Cross-OS Prefilling via Pure-Go Steam CM Client (`internal/steam/cm.go`, `internal/prefill/prefill.go`)**:
   - Eliminates host OS restrictions (e.g. allows a macOS host or headless Linux server to prefill Windows or Linux games without Steam client installed on the host).
   - Clean, all-Golang native implementation: **zero** external C# / .NET / third-party prefill CLI binaries.
