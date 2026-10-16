@@ -517,7 +517,9 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		var depotCount int
 		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0", appID).Scan(&depotCount)
 		if depotCount == 0 {
-			_ = proxy.FetchRemoteSteamAppInfo(m.db, appID)
+			if err := proxy.FetchRemoteSteamAppInfo(m.db, appID); err != nil {
+				log.Printf("[Prefill Engine] Could not fetch remote depot metadata for app %d: %v", appID, err)
+			}
 		}
 	}
 
@@ -541,6 +543,10 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		}
 	}
 
+	if len(allDepots) == 0 {
+		log.Printf("[Prefill Engine] No depot metadata available for app %d (%s). Waiting for game install/update via Steam client to capture manifests.", appID, job.AppName)
+	}
+
 	// Filter depots by targetPlatform if specified (e.g. "Windows, Mac")
 	var activeDepots []matchedDepot
 	if targetPlatform != "" {
@@ -553,19 +559,20 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 
 		matchesPlatform := func(depotPlat, target string) bool {
 			dp := strings.ToLower(depotPlat)
-			if dp == "" || dp == "pc" {
+			tg := strings.ToLower(target)
+			if dp == "" || dp == "pc" || tg == "" || tg == "pc" || tg == "all" {
 				return true // Unspecified/common content depots apply to all platforms
 			}
-			if strings.Contains(target, "mac") || strings.Contains(target, "apple") || strings.Contains(target, "osx") {
+			if strings.Contains(tg, "mac") || strings.Contains(tg, "apple") || strings.Contains(tg, "osx") {
 				return strings.Contains(dp, "mac") || strings.Contains(dp, "apple") || strings.Contains(dp, "osx")
 			}
-			if strings.Contains(target, "linux") {
+			if strings.Contains(tg, "linux") {
 				return strings.Contains(dp, "linux")
 			}
-			if strings.Contains(target, "win") {
+			if strings.Contains(tg, "win") {
 				return strings.Contains(dp, "win")
 			}
-			return strings.Contains(dp, target) || strings.Contains(target, dp)
+			return strings.Contains(dp, tg) || strings.Contains(tg, dp)
 		}
 
 		// Check if a 64-bit depot exists for each target platform to filter out legacy 32-bit depots
