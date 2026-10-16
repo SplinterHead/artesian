@@ -13,16 +13,25 @@
       </div>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table library-table">
+          <colgroup>
+            <col class="col-store" />
+            <col class="col-title" />
+            <col class="col-status" />
+            <col class="col-autoupdate" />
+            <col class="col-size" />
+            <col class="col-sync" />
+            <col class="col-actions" />
+          </colgroup>
           <thead>
             <tr>
-              <th style="width: 50px;">Store</th>
-              <th>Title</th>
-              <th>Status</th>
-              <th>Auto-Update</th>
-              <th>Size</th>
-              <th>Last Sync</th>
-              <th>Actions</th>
+              <th class="col-store">Store</th>
+              <th class="col-title">Title</th>
+              <th class="col-status">Status</th>
+              <th class="col-autoupdate">Auto-Update</th>
+              <th class="col-size">Size</th>
+              <th class="col-sync">Last Sync</th>
+              <th class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -32,7 +41,7 @@
               </td>
             </tr>
             <tr v-for="game in library" :key="(game.service || 'steam') + game.app_id">
-              <td>
+              <td class="col-store">
                 <div 
                   class="store-logo-box" 
                   :class="'store-logo-' + (getLogoKey(game.service) || 'generic')"
@@ -49,7 +58,7 @@
                   <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
                 </div>
               </td>
-              <td>
+              <td class="col-title">
                 <div class="game-cell">
                   <strong>{{ game.name }}</strong>
                   <span v-if="game.platform" class="platform-tags-wrap">
@@ -64,12 +73,12 @@
                   </span>
                 </div>
               </td>
-              <td>
+              <td class="col-status">
                 <span :class="['status-badge', game.status]">
                   {{ game.status.toUpperCase() }}
                 </span>
               </td>
-              <td>
+              <td class="col-autoupdate">
                 <button 
                   type="button"
                   class="badge-toggle-btn"
@@ -81,16 +90,16 @@
                   </span>
                 </button>
               </td>
-              <td>
+              <td class="col-size">
                 <div class="size-cell">
                   <span class="depot-size">{{ formatBytes(game.size_bytes) }}</span>
                 </div>
               </td>
-              <td class="text-muted">{{ formatDate(game.last_checked) }}</td>
-              <td>
+              <td class="col-sync text-muted">{{ formatDate(game.last_checked) }}</td>
+              <td class="col-actions">
                 <div class="table-actions">
                   <button 
-                    class="btn btn-xs btn-outline-secondary"
+                    class="btn btn-xs btn-outline-primary btn-icon-xs"
                     :disabled="recheckingKey === getGameKey(game) || deletingKey === getGameKey(game)"
                     title="Re-check and sync chunks against depot"
                     @click="$emit('recheck-game', game)"
@@ -99,7 +108,7 @@
                     <i v-else class="fa-solid fa-rotate-right"></i>
                   </button>
                   <button 
-                    class="btn btn-xs btn-outline-danger"
+                    class="btn btn-xs btn-outline-danger btn-icon-xs"
                     :disabled="deletingKey === getGameKey(game)"
                     title="Remove game from library"
                     @click="$emit('remove-from-library', game)"
@@ -128,25 +137,35 @@
       </div>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table library-table">
+          <colgroup>
+            <col class="col-store" />
+            <col class="col-title" />
+            <col class="col-status" />
+            <col class="col-autoupdate" />
+            <col class="col-size" />
+            <col class="col-sync" />
+            <col class="col-actions" />
+          </colgroup>
           <thead>
             <tr>
-              <th style="width: 50px;">Store</th>
-              <th>App ID</th>
-              <th>Title</th>
-              <th>Size</th>
-              <th>Last Requested</th>
-              <th>Actions</th>
+              <th class="col-store">Store</th>
+              <th class="col-title">Title</th>
+              <th class="col-status text-muted">Status</th>
+              <th class="col-autoupdate text-muted">Auto-Update</th>
+              <th class="col-size">Size</th>
+              <th class="col-sync">Last Requested</th>
+              <th class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="cachedGames.length === 0">
-              <td colspan="6" class="empty-cell">
+              <td colspan="7" class="empty-cell">
                 No games cached yet, they'll appear here when you start downloading in Steam or Epic Games
               </td>
             </tr>
             <tr v-for="item in cachedGames" :key="(item.service || 'steam') + item.app_id + item.name">
-              <td>
+              <td class="col-store">
                 <div 
                   class="store-logo-box" 
                   :class="'store-logo-' + (getLogoKey(item.service) || 'generic')"
@@ -163,36 +182,40 @@
                   <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
                 </div>
               </td>
-              <td><code>{{ item.app_id || '—' }}</code></td>
-              <td>
+              <td class="col-title">
                 <div class="game-cell">
                   <strong>{{ item.name }}</strong>
-                  <span v-if="item.platform" class="platform-tag" :title="item.platform">
-                    <i :class="getPlatformIcon(item.platform)"></i>
+                  <span v-if="item.platform" class="platform-tags-wrap">
+                    <span 
+                      v-for="p in getPlatformList(item.platform)" 
+                      :key="p" 
+                      class="platform-tag" 
+                      :title="p"
+                    >
+                      <i :class="getPlatformIcon(p)"></i>
+                    </span>
                   </span>
                 </div>
               </td>
-              <td>
+              <td class="col-status text-muted">—</td>
+              <td class="col-autoupdate text-muted">—</td>
+              <td class="col-size">
                 <div class="size-cell">
                   <span class="depot-size">{{ formatBytes(item.cached_bytes) }}</span>
-                  <span v-if="item.cached_chunks" class="chunk-badge">{{ item.cached_chunks }} chunks</span>
-                  <span v-if="item.total_size > 0 && item.total_size !== item.cached_bytes" class="text-xs text-muted block w-full mt-0.5">
-                    Depot: {{ formatBytes(item.total_size) }}
-                  </span>
                 </div>
               </td>
-              <td class="text-muted">{{ formatDate(item.last_seen) }}</td>
-              <td>
+              <td class="col-sync text-muted">{{ formatDate(item.last_seen) }}</td>
+              <td class="col-actions">
                 <div class="table-actions">
                   <button 
-                    class="btn btn-xs btn-primary add-library-btn"
-                    title="Add this intercepted game to your managed library"
+                    class="btn btn-xs btn-outline-primary btn-icon-xs"
+                    title="Add to Library"
                     @click="$emit('add-to-library', item)"
                   >
-                    <i class="fa-solid fa-plus mr-1"></i> Add to Library
+                    <i class="fa-solid fa-plus"></i>
                   </button>
                   <button 
-                    class="btn btn-xs btn-outline-danger"
+                    class="btn btn-xs btn-outline-danger btn-icon-xs"
                     :disabled="deletingKey === getGameKey(item)"
                     title="Delete cached game and purge chunks"
                     @click="$emit('delete-cached-game', item)"
@@ -316,26 +339,57 @@ function getGameKey(game) {
   color: var(--text-secondary);
 }
 
-.chunk-badge {
-  font-size: 0.7rem;
-  padding: 0.12rem 0.45rem;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
+.library-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.col-store {
+  width: 56px;
+  text-align: center;
+}
+
+.col-title {
+  width: auto;
+}
+
+.col-status {
+  width: 130px;
+}
+
+.col-autoupdate {
+  width: 120px;
+}
+
+.col-size {
+  width: 110px;
+}
+
+.col-sync {
+  width: 145px;
+}
+
+.col-actions {
+  width: 85px;
+  text-align: right;
 }
 
 .table-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.4rem;
 }
 
-.add-library-btn {
-  font-weight: 600;
+.btn-icon-xs {
+  width: 28px;
+  height: 28px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .store-logo-box {
