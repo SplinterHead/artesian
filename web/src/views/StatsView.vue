@@ -37,15 +37,15 @@
       </div>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table active-downloads-table">
           <thead>
             <tr>
-              <th></th>
-              <th>Client</th>
-              <th>Store</th>
-              <th>Game Title</th>
-              <th>Depot ID</th>
-              <th>Size</th>
+              <th class="col-time"></th>
+              <th class="col-client">Client</th>
+              <th class="col-store">Store</th>
+              <th class="col-game">Game</th>
+              <th class="col-depot">Depot ID</th>
+              <th class="col-size">Size</th>
             </tr>
           </thead>
           <tbody>
@@ -55,9 +55,16 @@
               </td>
             </tr>
             <tr v-for="d in activeDownloads" :key="d.key || (d.client_ip + d.store + d.game_title)" class="traffic-row">
-              <td class="text-muted"><code>{{ d.timestamp || d.time }}</code></td>
-              <td><code class="ip-code">{{ cleanClientIP(d.client_ip) }}</code></td>
-              <td>
+              <td class="col-time text-muted" :title="'Initial chunk: ' + (d.first_seen ? new Date(d.first_seen).toLocaleString() : (d.timestamp || d.time))">
+                <code>{{ d.timestamp || d.time }}</code>
+              </td>
+              <td class="col-client">
+                <span v-if="cleanClientIP(d.client_ip) === 'Artesian'" class="client-badge-artesian" title="Internal Artesian Depot Caching Engine">
+                  <i class="fa-solid fa-server mr-1"></i> Artesian
+                </span>
+                <code v-else class="ip-code">{{ cleanClientIP(d.client_ip) }}</code>
+              </td>
+              <td class="col-store">
                 <div 
                   class="store-logo-box" 
                   :class="'store-logo-' + (getLogoKey(d.service, d.store) || 'generic')"
@@ -74,15 +81,22 @@
                   <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
                 </div>
               </td>
-              <td>
+              <td class="col-game">
                 <div class="game-cell">
                   <strong class="game-title">{{ d.game_title || 'Game Asset' }}</strong>
-                  <span class="platform-tag" :title="d.platform || 'PC'">
-                    <i :class="getPlatformIcon(d.platform)"></i>
+                  <span v-if="d.platform" class="platform-tags-wrap">
+                    <span 
+                      v-for="p in getPlatformList(d.platform)" 
+                      :key="p" 
+                      class="platform-tag" 
+                      :title="p"
+                    >
+                      <i :class="getPlatformIcon(p)"></i>
+                    </span>
                   </span>
                 </div>
               </td>
-              <td>
+              <td class="col-depot">
                 <div class="depots-container">
                   <!-- Steam Depots: All depots for this game bundled as clickable badges -->
                   <template v-if="d.service === 'steam'">
@@ -145,14 +159,36 @@
                   </template>
                 </div>
               </td>
-              <td>
+              <td class="col-size">
                 <div class="size-cell">
-                  <span class="depot-size">
-                    {{ formatBytes(d.total_depot_size || d.bytes_transferred || 0) }}
-                  </span>
-                  <span v-if="d.chunk_count && d.chunk_count > 1" class="chunk-badge">
-                    {{ d.chunk_count }} files
-                  </span>
+                  <div class="size-progress-wrap">
+                    <div class="size-header-row">
+                      <span class="depot-size">
+                        <template v-if="d.total_depot_size && d.bytes_transferred < d.total_depot_size">
+                          {{ formatBytes(d.bytes_transferred) }} / {{ formatBytes(d.total_depot_size) }}
+                        </template>
+                        <template v-else>
+                          {{ formatBytes(d.total_depot_size || d.bytes_transferred || 0) }}
+                        </template>
+                      </span>
+                      <span 
+                        v-if="d.total_depot_size && d.total_depot_size > 0" 
+                        class="pct-badge" 
+                        :class="{ 'pct-done': d.bytes_transferred >= d.total_depot_size }"
+                      >
+                        {{ Math.min(100, Math.round((d.bytes_transferred / d.total_depot_size) * 100)) }}%
+                      </span>
+                      <span v-else-if="d.chunk_count && d.chunk_count > 1" class="chunk-badge">
+                        {{ d.chunk_count }} files
+                      </span>
+                    </div>
+                    <div v-if="d.total_depot_size && d.total_depot_size > 0" class="download-mini-progress">
+                      <div 
+                        class="download-mini-progress-fill" 
+                        :style="{ width: Math.min(100, (d.bytes_transferred / d.total_depot_size) * 100) + '%' }"
+                      ></div>
+                    </div>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -171,7 +207,8 @@ import {
   formatChunkID, 
   formatStore, 
   getLogoKey, 
-  getPlatformIcon 
+  getPlatformIcon,
+  getPlatformList 
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -336,6 +373,12 @@ defineEmits(['clear-traffic']);
   flex-wrap: wrap;
 }
 
+.platform-tags-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .game-title {
   color: var(--text-primary);
   font-size: 0.88rem;
@@ -395,24 +438,11 @@ defineEmits(['clear-traffic']);
   opacity: 0.75;
 }
 
-.depot-size {
-  font-family: var(--font-mono, monospace);
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
 .depots-container {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
   align-items: center;
-}
-
-.size-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 .chunk-badge {
@@ -423,6 +453,115 @@ defineEmits(['clear-traffic']);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
+}
+
+.client-badge-artesian {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  letter-spacing: 0.02em;
+}
+
+.active-downloads-table {
+  width: 100%;
+}
+
+.active-downloads-table .col-time {
+  width: 95px;
+  white-space: nowrap;
+}
+
+.active-downloads-table .col-client {
+  width: 140px;
+  white-space: nowrap;
+}
+
+.active-downloads-table .col-store {
+  width: 60px;
+  text-align: center;
+}
+
+.active-downloads-table .col-game {
+  min-width: 180px;
+}
+
+.active-downloads-table .col-depot {
+  min-width: 150px;
+}
+
+.active-downloads-table .col-size {
+  width: 270px;
+}
+
+.size-cell {
+  display: flex;
+  align-items: center;
+}
+
+.size-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 250px;
+}
+
+.size-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.depot-size {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.pct-badge {
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  min-width: 42px;
+  text-align: center;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.pct-badge.pct-done {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.download-mini-progress {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.download-mini-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  border-radius: 999px;
+  transition: width 0.2s ease-out;
 }
 </style>
 

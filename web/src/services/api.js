@@ -33,6 +33,30 @@ export const api = {
       body: JSON.stringify({ id, enabled }),
     });
   },
+  async toggleServiceAutoUpdate(id, autoUpdate) {
+    return request('/api/v1/services/auto-update', {
+      method: 'POST',
+      body: JSON.stringify({ id, auto_update: autoUpdate }),
+    });
+  },
+  async connectService(service, username, token = '') {
+    return request('/api/v1/services/connect', {
+      method: 'POST',
+      body: JSON.stringify({ service, username, token }),
+    });
+  },
+  async disconnectService(service) {
+    return request('/api/v1/services/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({ service }),
+    });
+  },
+  async getAvailableGames(service = 'steam') {
+    return request(`/api/v1/services/available-games?service=${encodeURIComponent(service)}`);
+  },
+  async getGamePlatforms(service, appId) {
+    return request(`/api/v1/games/platforms?service=${encodeURIComponent(service)}&app_id=${encodeURIComponent(appId)}`);
+  },
 
   // Steam Auth
   async getSteamStatus() {
@@ -61,20 +85,37 @@ export const api = {
   async getCachedGames() {
     return request('/api/v1/library/cached');
   },
-  async addGame({ appId, name, service = 'steam', autoUpdate = true }) {
+  async deleteCachedGame(appId, service = 'steam') {
+    return request(`/api/v1/library/cached?app_id=${appId}&service=${service}`, {
+      method: 'DELETE',
+    });
+  },
+  async addGame({ appId, name, service = 'steam', platform = '', autoUpdate = true, replacePlatforms = false }) {
     return request('/api/v1/library', {
       method: 'POST',
       body: JSON.stringify({
         app_id: appId,
         service,
         name,
+        platform,
         auto_update: autoUpdate,
+        replace_platforms: replacePlatforms,
       }),
     });
   },
   async removeGame(appId, service = 'steam') {
     return request(`/api/v1/library?app_id=${appId}&service=${service}`, {
       method: 'DELETE',
+    });
+  },
+  async updateGameAutoUpdate(appId, service = 'steam', autoUpdate) {
+    return request('/api/v1/library', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        app_id: appId,
+        service,
+        auto_update: autoUpdate,
+      }),
     });
   },
   async startPrefill({ appId, name, service = 'steam' }) {
@@ -92,30 +133,46 @@ export const api = {
   async getSchedulerRules() {
     return request('/api/v1/scheduler/rules');
   },
-  async pollPICS() {
-    return request('/api/v1/scheduler/pics/poll', { method: 'POST' });
+  async updateSchedulerRule(id, cronExpression, enabled) {
+    return request('/api/v1/scheduler/rules', {
+      method: 'POST',
+      body: JSON.stringify({
+        id,
+        cron_expression: cronExpression,
+        enabled,
+      }),
+    });
   },
-  async triggerSimulatedPICS(appId = 730) {
-    return request(`/api/v1/scheduler/pics/trigger?app_id=${appId}`, { method: 'POST' });
+  async checkSteamUpdates() {
+    return request('/api/v1/scheduler/check', { method: 'POST' });
+  },
+  async getUpdateLogs() {
+    return request('/api/v1/updates/log');
   },
 
   // Settings / Config
   async getDNSConfig() {
     return request('/api/v1/config/dns');
   },
-  async saveDNSConfig(upstreamDns) {
+  async saveDNSConfig(upstreamDns, interceptIpv4) {
     return request('/api/v1/config/dns', {
       method: 'POST',
-      body: JSON.stringify({ upstream_dns: upstreamDns }),
+      body: JSON.stringify({
+        upstream_dns: upstreamDns,
+        intercept_ipv4: interceptIpv4,
+      }),
     });
   },
   async getStorageConfig() {
     return request('/api/v1/config/storage');
   },
-  async saveStorageConfig(storagePath) {
+  async saveStorageConfig(storagePath, maxSizeBytes) {
     return request('/api/v1/config/storage', {
       method: 'POST',
-      body: JSON.stringify({ storage_path: storagePath }),
+      body: JSON.stringify({
+        storage_path: storagePath,
+        max_size_bytes: maxSizeBytes,
+      }),
     });
   },
 

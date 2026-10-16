@@ -21,7 +21,19 @@ export function useDownloads() {
     return `${ip}:${service}:${game}`;
   }
 
+  function sortByFirstSeen(a, b) {
+    const tA = a.first_seen ? new Date(a.first_seen).getTime() : (a._firstSeenMs || 0);
+    const tB = b.first_seen ? new Date(b.first_seen).getTime() : (b._firstSeenMs || 0);
+    if (tB !== tA) {
+      return tB - tA; // Newest initial start time on top
+    }
+    return (a.key || '').localeCompare(b.key || '');
+  }
+
   function updateOrInsertSession(sess) {
+    if (cleanClientIP(sess.client_ip) === '127.0.0.1' || cleanClientIP(sess.client_ip) === '::1') {
+      return;
+    }
     sess._lastSeen = Date.now();
     if (!sess.last_active) {
       sess.last_active = new Date().toISOString();
@@ -46,12 +58,35 @@ export function useDownloads() {
         sess.platform = existing.platform;
       }
 
-      activeDownloads.value.splice(idx, 1);
+      if (existing.timestamp) {
+        sess.timestamp = existing.timestamp;
+      }
+      if (existing.first_seen && !sess.first_seen) {
+        sess.first_seen = existing.first_seen;
+      }
+      sess._firstSeenMs = existing._firstSeenMs || (sess.first_seen ? new Date(sess.first_seen).getTime() : 0);
+
+      const updated = { ...existing, ...sess };
+      activeDownloads.value[idx] = updated;
+    } else {
+      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      if (!sess.first_seen) {
+        sess.first_seen = nowIso;
+      }
+      sess._firstSeenMs = sess.first_seen ? new Date(sess.first_seen).getTime() : nowMs;
+      if (!sess.timestamp) {
+        sess.timestamp = new Date().toLocaleTimeString();
+      }
+      activeDownloads.value.push(sess);
+      activeDownloads.value.sort(sortByFirstSeen);
     }
-    activeDownloads.value.unshift(sess);
   }
 
   function bundleIncomingChunk(evt) {
+    if (cleanClientIP(evt.client_ip) === '127.0.0.1' || cleanClientIP(evt.client_ip) === '::1') {
+      return;
+    }
     const key = getSessionKey(evt);
     const nowStr = new Date().toLocaleTimeString();
     const idx = activeDownloads.value.findIndex(d => getSessionKey(d) === key || d.key === key);
@@ -60,7 +95,9 @@ export function useDownloads() {
       const s = activeDownloads.value[idx];
       s._lastSeen = Date.now();
       s.last_active = new Date().toISOString();
-      s.timestamp = evt.timestamp || nowStr;
+      if (!s.timestamp) {
+        s.timestamp = evt.timestamp || nowStr;
+      }
       s.bytes_transferred = (s.bytes_transferred || 0) + (evt.bytes_transferred || 0);
       s.chunk_count = (s.chunk_count || 1) + 1;
 
@@ -89,17 +126,17 @@ export function useDownloads() {
       if (evt.platform && evt.platform !== 'PC' && (s.platform === 'PC' || !s.platform)) {
         s.platform = evt.platform;
       }
-
-      if (idx > 0) {
-        activeDownloads.value.splice(idx, 1);
-        activeDownloads.value.unshift(s);
-      }
+      // Row position remains locked in place
     } else {
       const baseApp = evt.app_id || (evt.depot_id ? Math.floor(evt.depot_id / 10) * 10 : 0);
+      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
       const newSession = {
         key: key,
-        _lastSeen: Date.now(),
-        last_active: new Date().toISOString(),
+        _lastSeen: nowMs,
+        _firstSeenMs: nowMs,
+        first_seen: evt.first_seen || nowIso,
+        last_active: nowIso,
         client_ip: evt.client_ip,
         store: evt.store || (evt.service ? evt.service.toUpperCase() : 'Game CDN'),
         service: evt.service,
@@ -113,7 +150,8 @@ export function useDownloads() {
         chunk_count: 1,
         timestamp: evt.timestamp || nowStr,
       };
-      activeDownloads.value.unshift(newSession);
+      activeDownloads.value.push(newSession);
+      activeDownloads.value.sort(sortByFirstSeen);
     }
   }
 
@@ -134,10 +172,42 @@ export function useDownloads() {
       const data = await api.getTraffic();
       if (Array.isArray(data.downloads)) {
         const now = Date.now();
-        activeDownloads.value = data.downloads.map(d => ({
-          ...d,
-          _lastSeen: d._lastSeen || (d.last_active ? new Date(d.last_active).getTime() : now),
-        }));
+        const incoming = data.downloads.filter(d => cleanClientIP(d.client_ip) !== '127.0.0.1' && cleanClientIP(d.client_ip) !== '::1');
+        const incomingKeys = new Set(incoming.map(d => getSessionKey(d) || d.key));
+
+        // 1. Remove sessions no longer active
+        activeDownloads.value = activeDownloads.value.filter(d => incomingKeys.has(getSessionKey(d) || d.key));
+
+        // 2. Update existing in-place or insert new
+        let needsSort = false;
+        for (const inc of incoming) {
+          const key = getSessionKey(inc) || inc.key;
+          const idx = activeDownloads.value.findIndex(d => (getSessionKey(d) || d.key) === key);
+          if (idx !== -1) {
+            const existing = activeDownloads.value[idx];
+            activeDownloads.value[idx] = {
+              ...existing,
+              ...inc,
+              first_seen: existing.first_seen || inc.first_seen,
+              _firstSeenMs: existing._firstSeenMs || (inc.first_seen ? new Date(inc.first_seen).getTime() : 0),
+              timestamp: existing.timestamp || inc.timestamp,
+              _lastSeen: inc._lastSeen || (inc.last_active ? new Date(inc.last_active).getTime() : now),
+            };
+          } else {
+            activeDownloads.value.push({
+              ...inc,
+              first_seen: inc.first_seen || new Date().toISOString(),
+              _firstSeenMs: inc.first_seen ? new Date(inc.first_seen).getTime() : now,
+              timestamp: inc.timestamp || new Date().toLocaleTimeString(),
+              _lastSeen: inc._lastSeen || (inc.last_active ? new Date(inc.last_active).getTime() : now),
+            });
+            needsSort = true;
+          }
+        }
+
+        if (needsSort) {
+          activeDownloads.value.sort(sortByFirstSeen);
+        }
       }
       totalFilesLogged.value = (data.traffic || []).length;
     } catch (e) {
