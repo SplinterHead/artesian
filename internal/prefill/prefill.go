@@ -512,12 +512,12 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = 'steam' LIMIT 1", appID).Scan(&targetPlatform)
 	}
 
-	// Ensure depot metadata exists in depot_meta_cache
+	// Ensure depot metadata exists in depot_meta_cache with valid manifest_id
 	if m.db != nil {
 		var depotCount int
-		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0", appID).Scan(&depotCount)
+		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0 AND manifest_id > 0", appID).Scan(&depotCount)
 		if depotCount == 0 {
-			log.Printf("[Prefill Engine] App %d (%s): No depots in local database, querying remote SteamCMD metadata...", appID, job.AppName)
+			log.Printf("[Prefill Engine] App %d (%s): Depot metadata missing or manifest_id is 0, querying remote SteamCMD metadata...", appID, job.AppName)
 			if err := proxy.FetchRemoteSteamAppInfo(m.db, appID); err != nil {
 				log.Printf("[Prefill Engine] Could not fetch remote depot metadata for app %d: %v", appID, err)
 			} else {
@@ -630,6 +630,7 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 
 	for _, d := range activeDepots {
 		var depotChunks []ChunkMeta
+		log.Printf("[Prefill Engine] Depot %d: Resolving manifest (manifestID=%d, platform=%s)...", d.depotID, d.manifestID, d.platform)
 
 		// 1. Check if SQLite already has parsed genuine manifest chunks for this depot
 		if m.db != nil && m.db.HasManifestChunks(d.depotID) {
@@ -700,6 +701,10 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 					log.Printf("[Prefill Engine] Steam CM manifest fetch failed for depot %d: %v", d.depotID, err)
 				}
 			}
+		}
+
+		if d.manifestID <= 0 {
+			log.Printf("[Prefill Engine] Depot %d: No manifest GID discovered (manifestID=%d), skipping Steam CM request", d.depotID, d.manifestID)
 		}
 
 		// 4. Fallback notice if no genuine manifest exists anywhere yet
