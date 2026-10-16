@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -569,7 +570,7 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 		return fmt.Errorf("invalid app ID: %d", appID)
 	}
 
-	client := &http.Client{Timeout: 6 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	apiURL := fmt.Sprintf("https://api.steamcmd.net/v1/info/%d", appID)
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
@@ -579,11 +580,13 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[Depot Meta] Error fetching SteamCMD info for app %d: %v", appID, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Depot Meta] SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
 		return fmt.Errorf("SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
 	}
 
@@ -603,6 +606,7 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&steamCmdData); err != nil {
+		log.Printf("[Depot Meta] Failed to decode SteamCMD JSON for app %d: %v", appID, err)
 		return err
 	}
 
@@ -639,14 +643,14 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 
 		var manifestID int64
 		if pub, ok := dVal.Manifests["public"]; ok {
-			if gid, err := strconv.ParseInt(pub.Gid, 10, 64); err == nil {
-				manifestID = gid
+			if gid, err := strconv.ParseUint(pub.Gid, 10, 64); err == nil {
+				manifestID = int64(gid)
 			}
 		}
 		if manifestID == 0 {
 			for _, m := range dVal.Manifests {
-				if gid, err := strconv.ParseInt(m.Gid, 10, 64); err == nil && gid > 0 {
-					manifestID = gid
+				if gid, err := strconv.ParseUint(m.Gid, 10, 64); err == nil && gid > 0 {
+					manifestID = int64(gid)
 					break
 				}
 			}
