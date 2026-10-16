@@ -85,8 +85,13 @@ code, pre {
 .btn-secondary:hover { background: #27354d; }
 .btn-accent { background: var(--accent-green); color: #022013; }
 .btn-accent:hover { background: #6ee7b7; }
+.btn-danger { background: #ef4444; color: #ffffff; }
+.btn-danger:hover { background: #dc2626; }
 .btn-outline-danger { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
 .btn-outline-danger:hover { background: rgba(239, 68, 68, 0.1); }
+.btn-outline-secondary { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+.btn-outline-secondary:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-primary); border-color: rgba(255, 255, 255, 0.2); }
+.btn:disabled, .btn[disabled] { opacity: 0.45; cursor: not-allowed !important; pointer-events: none; }
 .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
 .btn-xs { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 
@@ -137,6 +142,10 @@ code, pre {
 .status-badge.ready { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
 .status-badge.awaiting_2fa { background: rgba(251, 191, 36, 0.15); color: var(--accent-amber); }
 .status-badge.disconnected { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
+.status-badge.prefilling { background: rgba(56, 189, 248, 0.2); color: var(--accent); }
+.status-badge.synced { background: rgba(52, 211, 153, 0.2); color: var(--accent-green); }
+.status-badge.monitoring { background: rgba(147, 197, 253, 0.15); color: #93c5fd; }
+.status-badge.error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
 
 /* Tables */
 .table-wrap {
