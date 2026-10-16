@@ -1,5 +1,7 @@
 # Artesian
 
+[![Built with Gemini](https://img.shields.io/badge/Built%20with-Gemini-8E75C2?style=for-the-badge&logo=googlegemini&logoColor=white)](https://deepmind.google/technologies/gemini/)
+
 **Artesian** is a unified, modern, high-performance local network game content cache, DNS interceptor, and management engine written in **Go + VueJS**.
 
 Designed to replace complex, fragmented, and multi-container legacy network caching environments, Artesian consolidates DNS interception, HTTP reverse proxying, intelligent chunk caching, automated update polling, and proactive prefill orchestration into a single, cohesive binary with a sleek modern web interface.
@@ -12,12 +14,16 @@ Designed to replace complex, fragmented, and multi-container legacy network cach
   Intercepts DNS queries for game distribution CDNs (Steam, Epic Games, Blizzard, Riot, Xbox) and rewrites them to the local proxy IP. Transparently forwards all regular DNS queries to upstream resolvers (Cloudflare, Google, or local gateways) with zero configuration overhead.
 - **High-Throughput HTTP Chunk Cache:**
   Content-addressable local storage layer optimized for NVMe and SSD drives. Seamlessly streams cached game chunks to LAN clients at multi-gigabit wire speed.
-- **Pluggable Game Service Modules:**
-  Built-in support for major game ecosystems (starting with Steam), including domain pattern matching, chunk identification, and depot parsing.
+- **Authenticated Account Integration (Steam):**
+  Direct connection to the Steam Connection Manager (CM) and Steam Web API (`IPlayerService`). Automatically discovers your genuine owned game library with Steam Guard 2FA support and persistent session storage.
+- **Dynamic Game Library with Searchable Text Filter:**
+  Interactive Game Add modal that transforms into a real-time text filter input when opened, allowing instant lookup by title or App ID across hundreds of owned games, complete with arrow-key navigation.
+- **Automated Depot Caching & Prefill Pipeline:**
+  Automatically triggers depot caching the moment a game is added to your library, delta-diffing missing chunks against local storage.
+- **Live Active Downloads Telemetry:**
+  Monitors ongoing client traffic and internal prefill operations in real time. Internal cache warming displays with a distinct **Artesian** client badge, clickable SteamDB depot links, transfer rates, percentage badges, and animated progress bars.
 - **Automated Cron Timers & Realtime Update Checks:**
   Built-in scheduler to periodically check for new game patches and automatically warm the local cache before users even initiate downloads.
-- **Cache Prefill & Initialisation Pipeline:**
-  Trigger full initialisations or delta syncs for watched titles on demand.
 - **Unified Vue.js Control Center:**
   Single-page web dashboard providing live cache hit ratios, bandwidth savings, service switches, cron management, and prefill progress tracking.
 - **Lightweight & Single-Binary Architecture:**
@@ -117,7 +123,7 @@ docker run -d \
   --network host \
   -v $(pwd)/data/cache:/data/cache \
   -v $(pwd)/data/db:/data \
-  -v $(pwd)/configs/artesian.example.yaml:/etc/artesian/artesian.yaml:ro \
+  -v $(pwd)/data/manifests:/data/manifests \
   artesian:latest
 ```
 
@@ -136,8 +142,8 @@ The container exposes:
 # Build the unified daemon (embeds web/dist directly)
 go build -o artesian ./cmd/artesian
 
-# Run with custom configuration
-sudo ./artesian -config configs/artesian.example.yaml
+# Run with SQLite state database
+sudo ./artesian -db ./data/db/artesian.db
 ```
 
 The daemon will simultaneously bind:
