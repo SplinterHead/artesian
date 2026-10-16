@@ -2,14 +2,19 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"artesian/internal/config"
 	"artesian/internal/db"
 	"artesian/internal/prefill"
+	"artesian/internal/proxy"
 	"artesian/internal/ws"
 
 	"github.com/robfig/cron/v3"
@@ -20,28 +25,27 @@ type Rule struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	CronExpression string    `json:"cron_expression"`
-	TaskType       string    `json:"task_type"` // "pics_poll", "cache_sync"
+	TaskType       string    `json:"task_type"` // "steam_update_check", "cache_sync"
 	Service        string    `json:"service"`
 	Enabled        bool      `json:"enabled"`
 	LastRun        time.Time `json:"last_run"`
 	NextRun        time.Time `json:"next_run"`
-	LastPICSChange uint64    `json:"last_pics_change,omitempty"`
 }
 
-// Scheduler coordinates cron jobs and PICS change polling
+// Scheduler coordinates cron jobs and Steam game update checks
 type Scheduler struct {
-	cfg       config.SchedulerConfig
-	db        *db.DB
-	prefill   *prefill.Manager
-	cron      *cron.Cron
-	rules     map[string]*Rule
-	rulesMu   sync.RWMutex
-	entryIDs  map[string]cron.EntryID
-	ctx       context.Context
-	cancel    context.CancelFunc
+	cfg      config.SchedulerConfig
+	db       *db.DB
+	prefill  *prefill.Manager
+	cron     *cron.Cron
+	rules    map[string]*Rule
+	rulesMu  sync.RWMutex
+	entryIDs map[string]cron.EntryID
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
-// NewScheduler initializes the cron and PICS engine
+// NewScheduler initializes the cron and update check engine
 func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manager) *Scheduler {
 	s := &Scheduler{
 		cfg:      cfg,
@@ -52,26 +56,49 @@ func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manag
 		entryIDs: make(map[string]cron.EntryID),
 	}
 
-	// Register default PICS polling schedule (every 10 minutes)
-	s.rules["steam-pics-poller"] = &Rule{
-		ID:             "steam-pics-poller",
-		Name:           "Steam PICS Realtime Change Poller",
-		CronExpression: "0 */10 * * * *", // Every 10 minutes
-		TaskType:       "pics_poll",
-		Service:        "steam",
-		Enabled:        true,
-		NextRun:        time.Now().Add(10 * time.Minute),
+	// 1. Load rules from SQLite database if available
+	if database != nil {
+		dbRules, err := database.GetSchedulerRules()
+		if err == nil && len(dbRules) > 0 {
+			for _, dr := range dbRules {
+				s.rules[dr.ID] = &Rule{
+					ID:             dr.ID,
+					Name:           dr.Name,
+					CronExpression: dr.CronExpression,
+					TaskType:       dr.TaskType,
+					Service:        dr.Service,
+					Enabled:        dr.Enabled,
+					LastRun:        dr.LastRun,
+					NextRun:        dr.NextRun,
+				}
+			}
+		}
 	}
 
-	// Register default cache maintenance
-	s.rules["cache-cleanup"] = &Rule{
-		ID:             "cache-cleanup",
-		Name:           "Daily Cache Storage Sync",
-		CronExpression: "0 0 3 * * *", // 3 AM
-		TaskType:       "cache_sync",
-		Service:        "all",
-		Enabled:        true,
-		NextRun:        time.Now().Add(24 * time.Hour),
+	// 2. Ensure default Steam Update Check rule exists
+	if _, ok := s.rules["steam-update-check"]; !ok {
+		s.rules["steam-update-check"] = &Rule{
+			ID:             "steam-update-check",
+			Name:           "Steam Game Update Check",
+			CronExpression: "0 */10 * * * *", // Every 10 minutes
+			TaskType:       "steam_update_check",
+			Service:        "steam",
+			Enabled:        true,
+			NextRun:        time.Now().Add(10 * time.Minute),
+		}
+	}
+
+	// 3. Ensure default Cache Storage Sync rule exists
+	if _, ok := s.rules["cache-cleanup"]; !ok {
+		s.rules["cache-cleanup"] = &Rule{
+			ID:             "cache-cleanup",
+			Name:           "Daily Cache Storage Sync",
+			CronExpression: "0 0 3 * * *", // 3 AM
+			TaskType:       "cache_sync",
+			Service:        "all",
+			Enabled:        true,
+			NextRun:        time.Now().Add(24 * time.Hour),
+		}
 	}
 
 	return s
@@ -87,13 +114,14 @@ func (s *Scheduler) Start(ctx context.Context) {
 	for id, rule := range s.rules {
 		if rule.Enabled {
 			ruleID := id
-			entryID, err := s.cron.AddFunc(rule.CronExpression, func() {
+			expr := normalizeCronExpr(rule.CronExpression)
+			entryID, err := s.cron.AddFunc(expr, func() {
 				s.executeRule(ruleID)
 			})
 			if err == nil {
 				s.entryIDs[ruleID] = entryID
 			} else {
-				log.Printf("[Scheduler] Error scheduling rule %s: %v", rule.Name, err)
+				log.Printf("[Scheduler] Error scheduling rule %s (%s): %v", rule.Name, expr, err)
 			}
 		}
 	}
@@ -126,11 +154,14 @@ func (s *Scheduler) executeRule(ruleID string) error {
 	}
 	rule.LastRun = time.Now()
 	rule.NextRun = time.Now().Add(10 * time.Minute)
+	if s.db != nil {
+		_ = s.db.UpdateSchedulerRuleRunTimes(ruleID, rule.LastRun, rule.NextRun)
+	}
 	s.rulesMu.Unlock()
 
 	switch rule.TaskType {
-	case "pics_poll":
-		go s.PollPICS()
+	case "steam_update_check":
+		go s.CheckSteamUpdates()
 	case "cache_sync":
 		log.Println("[Scheduler] Running daily storage sync and retention verification.")
 	}
@@ -138,72 +169,187 @@ func (s *Scheduler) executeRule(ruleID string) error {
 	return nil
 }
 
-// PollPICS checks Steam Product Information/Change System for all watched games
-func (s *Scheduler) PollPICS() {
+// CheckSteamUpdates checks Steam for game updates on all managed library titles
+func (s *Scheduler) CheckSteamUpdates() {
 	if s.db == nil || s.prefill == nil {
 		return
 	}
 
-	log.Println("[PICS Engine] Polling Steam Product Information/Change System (PICS)...")
+	log.Println("[Steam Update Check] Checking Steam for updates across managed titles...")
 	apps, err := s.db.GetWatchedApps()
 	if err != nil {
 		return
 	}
 
 	for _, app := range apps {
-		if !app.AutoUpdate {
+		// Verify service-level auto-update setting
+		if !s.db.GetServiceAutoUpdate(app.Service) {
+			log.Printf("[Steam Update Check] Skipping %s: auto-update disabled for service '%s'", app.Name, app.Service)
 			continue
 		}
 
-		// Simulate checking PICS change number
-		// In real deployment, compares app change number from Steam CM PICS API
-		newChangeNumber := app.ChangeNumber + 1
+		// Verify app-level auto-update variable
+		if !app.AutoUpdate {
+			log.Printf("[Steam Update Check] Skipping %s: auto-update disabled for title", app.Name)
+			continue
+		}
 
-		log.Printf("[PICS Engine] Checking %s (App ID %d, Change #%d)...", app.Name, app.AppID, app.ChangeNumber)
-
-		// Broadcast PICS event to UI
-		ws.GetHub().Broadcast("pics:poll", map[string]interface{}{
-			"app_id":        app.AppID,
-			"name":          app.Name,
-			"change_number": newChangeNumber,
-			"timestamp":     time.Now().Unix(),
-		})
+		if strings.EqualFold(app.Service, "steam") {
+			s.checkSteamAppUpdate(app)
+		}
 	}
 }
 
-// TriggerPICSUpdate manually simulates or executes an update detection for a specific game
-func (s *Scheduler) TriggerPICSUpdate(appID int64) error {
-	apps, err := s.db.GetWatchedApps()
+func (s *Scheduler) checkSteamAppUpdate(app db.WatchedApp) {
+	client := &http.Client{Timeout: 6 * time.Second}
+	apiURL := fmt.Sprintf("https://api.steamcmd.net/v1/info/%d", app.AppID)
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return err
+		log.Printf("[Steam Update Check] Error creating request for %s: %v", app.Name, err)
+		return
+	}
+	req.Header.Set("User-Agent", "Artesian/1.0 (Game Cache Proxy)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[Steam Update Check] Network check failed for %s: %v", app.Name, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Steam Update Check] SteamCMD API returned HTTP %d for %s", resp.StatusCode, app.Name)
+		return
 	}
 
-	var target *db.WatchedApp
-	for _, a := range apps {
-		if a.AppID == appID {
-			target = &a
-			break
+	var steamCmdData struct {
+		Status string `json:"status"`
+		Data   map[string]struct {
+			ChangeNumber uint64 `json:"_change_number"`
+			Common       struct {
+				Name string `json:"name"`
+			} `json:"common"`
+			Depots map[string]json.RawMessage `json:"depots"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&steamCmdData); err != nil {
+		log.Printf("[Steam Update Check] Failed to decode API response for %s: %v", app.Name, err)
+		return
+	}
+
+	appKey := fmt.Sprintf("%d", app.AppID)
+	appData, ok := steamCmdData.Data[appKey]
+	if !ok {
+		log.Printf("[Steam Update Check] No app data returned for %s (App ID %d)", app.Name, app.AppID)
+		return
+	}
+
+	liveChangeNumber := appData.ChangeNumber
+
+	// Check if any public branch manifest GID has changed
+	manifestChanged := false
+	var updatedDepotID int64
+	var newManifestGID int64
+
+	for dKey, dRaw := range appData.Depots {
+		dID, err := strconv.ParseInt(dKey, 10, 64)
+		if err != nil {
+			continue
+		}
+		var dVal struct {
+			Manifests map[string]struct {
+				Gid string `json:"gid"`
+			} `json:"manifests"`
+		}
+		if err := json.Unmarshal(dRaw, &dVal); err != nil {
+			continue
+		}
+		if pub, ok := dVal.Manifests["public"]; ok {
+			if gid, err := strconv.ParseInt(pub.Gid, 10, 64); err == nil && gid > 0 {
+				existingMeta, _ := s.db.GetDepotMeta(dID)
+				if existingMeta != nil && existingMeta.ManifestID > 0 && existingMeta.ManifestID != gid {
+					manifestChanged = true
+					updatedDepotID = dID
+					newManifestGID = gid
+				}
+			}
 		}
 	}
 
-	if target == nil {
-		return fmt.Errorf("app not found in library: %d", appID)
+	// Baseline initialization: if app has no recorded change number (0), store baseline without an alert
+	if app.ChangeNumber == 0 {
+		if liveChangeNumber > 0 {
+			app.ChangeNumber = liveChangeNumber
+			_ = s.db.UpsertWatchedApp(app)
+		}
+		_ = proxy.FetchRemoteSteamAppInfo(s.db, app.AppID)
+		log.Printf("[Steam Update Check] Baseline recorded for %s (Change #%d)", app.Name, liveChangeNumber)
+		return
 	}
 
-	log.Printf("[PICS Engine] Detected new version for %s via PICS! Triggering automated prefill...", target.Name)
+	hasUpdate := (liveChangeNumber > app.ChangeNumber) || manifestChanged
+	if !hasUpdate {
+		// Silently drop checks that resulted in no change
+		log.Printf("[Steam Update Check] %s is up to date (Change #%d). Check completed with no changes.", app.Name, app.ChangeNumber)
+		return
+	}
 
-	// Broadcast PICS update event to UI
+	// Update discovered!
+	log.Printf("[Steam Update Check] UPDATE DETECTED for %s: Change #%d -> #%d (Manifest changed: %v)", app.Name, app.ChangeNumber, liveChangeNumber, manifestChanged)
+
+	// Refresh depot metadata in SQLite
+	_ = proxy.FetchRemoteSteamAppInfo(s.db, app.AppID)
+
+	// Update watched_apps
+	app.ChangeNumber = liveChangeNumber
+	app.Status = "prefilling"
+	_ = s.db.UpsertWatchedApp(app)
+
+	var manifestStr string
+	if newManifestGID > 0 {
+		manifestStr = fmt.Sprintf("%d", newManifestGID)
+	}
+
+	updateMsg := fmt.Sprintf("New update detected for %s (Change #%d). Automated prefill initiated.", app.Name, liveChangeNumber)
+	if manifestChanged && updatedDepotID > 0 {
+		updateMsg = fmt.Sprintf("New manifest %s detected for %s (Depot %d). Automated prefill initiated.", manifestStr, app.Name, updatedDepotID)
+	}
+
+	logEntry := db.UpdateLogEntry{
+		AppID:        app.AppID,
+		Service:      app.Service,
+		GameTitle:    app.Name,
+		ChangeNumber: liveChangeNumber,
+		ManifestID:   manifestStr,
+		Status:       "Discovered",
+		Message:      updateMsg,
+		DiscoveredAt: time.Now(),
+	}
+	if s.db != nil {
+		_ = s.db.AddUpdateLog(logEntry)
+	}
+
+	// Broadcast update discovered event to UI
+	ws.GetHub().Broadcast("update:discovered", logEntry)
 	ws.GetHub().Broadcast("pics:update_detected", map[string]interface{}{
-		"app_id":    target.AppID,
-		"name":      target.Name,
-		"message":   fmt.Sprintf("PICS reported a patch update for %s. Automated delta prefill triggered.", target.Name),
-		"timestamp": time.Now().Unix(),
+		"app_id":        app.AppID,
+		"name":          app.Name,
+		"service":       app.Service,
+		"change_number": liveChangeNumber,
+		"manifest_id":   manifestStr,
+		"message":       logEntry.Message,
 	})
 
-	// Phase 5 Trigger: Automatically trigger Phase 4 Prefill process in background!
-	_, err = s.prefill.StartJob(context.Background(), target.Service, target.AppID, target.Name)
-	return err
+	// Trigger automated prefill
+	if s.prefill != nil {
+		go func() {
+			s.prefill.CancelJobsForApp(app.Service, app.AppID)
+			_, _ = s.prefill.StartJob(context.Background(), app.Service, app.AppID, app.Name)
+		}()
+	}
 }
+
 
 // GetRules returns all configured scheduler rules
 func (s *Scheduler) GetRules() []*Rule {
@@ -217,7 +363,7 @@ func (s *Scheduler) GetRules() []*Rule {
 	return result
 }
 
-// UpdateRule updates a cron rule
+// UpdateRule updates a cron rule in-memory, reschedules it, and persists it to SQLite
 func (s *Scheduler) UpdateRule(id, cronExpr string, enabled bool) error {
 	s.rulesMu.Lock()
 	defer s.rulesMu.Unlock()
@@ -227,17 +373,27 @@ func (s *Scheduler) UpdateRule(id, cronExpr string, enabled bool) error {
 		return fmt.Errorf("rule %s not found", id)
 	}
 
+	normalized := normalizeCronExpr(cronExpr)
+
+	// Validate cron expression
+	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	sched, err := parser.Parse(normalized)
+	if err != nil {
+		return fmt.Errorf("invalid cron expression '%s': %w", cronExpr, err)
+	}
+
 	rule.CronExpression = cronExpr
 	rule.Enabled = enabled
+	rule.NextRun = sched.Next(time.Now())
 
-	// Re-register in cron
+	// Re-register in cron runner
 	if oldEntry, ok := s.entryIDs[id]; ok {
 		s.cron.Remove(oldEntry)
 		delete(s.entryIDs, id)
 	}
 
 	if enabled {
-		entryID, err := s.cron.AddFunc(cronExpr, func() {
+		entryID, err := s.cron.AddFunc(normalized, func() {
 			s.executeRule(id)
 		})
 		if err != nil {
@@ -246,5 +402,28 @@ func (s *Scheduler) UpdateRule(id, cronExpr string, enabled bool) error {
 		s.entryIDs[id] = entryID
 	}
 
+	// Persist to SQLite
+	if s.db != nil {
+		_ = s.db.UpdateSchedulerRule(id, cronExpr, enabled)
+	}
+
+	// Broadcast update to all connected UI clients
+	ws.GetHub().Broadcast("scheduler:rules_updated", map[string]interface{}{
+		"id":              id,
+		"cron_expression": cronExpr,
+		"enabled":         enabled,
+		"next_run":        rule.NextRun,
+	})
+
 	return nil
+}
+
+// normalizeCronExpr converts 5-field crons (min hour dom mon dow) to 6-field (sec min hour dom mon dow)
+func normalizeCronExpr(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 5 {
+		return "0 " + trimmed
+	}
+	return trimmed
 }
