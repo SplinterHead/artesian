@@ -26,8 +26,10 @@
         :library="library" 
         :cached-games="cachedGames"
         :deleting-key="deletingGameKey"
+        :rechecking-key="recheckingGameKey"
         @open-add-game="openAddGameModal"
         @trigger-prefill="triggerPrefill"
+        @recheck-game="handleRecheckGame"
         @add-to-library="handleAddCachedGame"
         @remove-from-library="confirmRemoveFromLibrary"
         @delete-cached-game="confirmDeleteCachedGame"
@@ -220,6 +222,7 @@ const gameToDelete = ref(null);
 const isDeletingCachedGame = ref(false);
 const deletingGameKey = ref(null);
 const deletingInProgress = ref(false);
+const recheckingGameKey = ref(null);
 
 // Automation State
 const schedulerRules = ref([]);
@@ -588,9 +591,33 @@ async function triggerPrefill(game) {
     activePrefillJob.value = await api.startPrefill({
       appId: game.app_id,
       name: game.name,
-      service: 'steam',
+      service: game.service || 'steam',
     });
   } catch (e) {}
+}
+
+async function handleRecheckGame(game) {
+  if (!game) return;
+  const key = `${game.service || 'steam'}:${game.app_id || 0}:${game.name || ''}`;
+  recheckingGameKey.value = key;
+  try {
+    game.status = 'prefilling';
+    activePrefillJob.value = await api.startPrefill({
+      appId: game.app_id,
+      name: game.name,
+      service: game.service || 'steam',
+    });
+    await fetchLibrary();
+  } catch (err) {
+    console.error('Failed to trigger depot re-check:', err);
+    alert(err.message || 'Failed to trigger depot re-check');
+  } finally {
+    setTimeout(() => {
+      if (recheckingGameKey.value === key) {
+        recheckingGameKey.value = null;
+      }
+    }, 1200);
+  }
 }
 
 async function toggleServiceMonitoring(svc) {

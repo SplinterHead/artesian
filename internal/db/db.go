@@ -682,6 +682,18 @@ func (db *DB) UpdateWatchedAppAutoUpdate(appID int64, service string, autoUpdate
 	return err
 }
 
+// UpdateWatchedAppStatus updates only the status and last_checked timestamp for a watched app
+func (db *DB) UpdateWatchedAppStatus(appID int64, service, status string) error {
+	if db == nil || appID <= 0 {
+		return nil
+	}
+	if service == "" {
+		service = "steam"
+	}
+	_, err := db.Exec("UPDATE watched_apps SET status = ?, last_checked = CURRENT_TIMESTAMP WHERE app_id = ? AND service = ?", status, appID, service)
+	return err
+}
+
 // GetServiceAutoUpdate returns whether auto-update is enabled for a specific service
 func (db *DB) GetServiceAutoUpdate(service string) bool {
 	if db == nil {

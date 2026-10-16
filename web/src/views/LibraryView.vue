@@ -90,6 +90,15 @@
               <td>
                 <div class="table-actions">
                   <button 
+                    class="btn btn-xs btn-outline-secondary"
+                    :disabled="recheckingKey === getGameKey(game) || deletingKey === getGameKey(game)"
+                    title="Re-check and sync chunks against depot"
+                    @click="$emit('recheck-game', game)"
+                  >
+                    <i v-if="recheckingKey === getGameKey(game)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i v-else class="fa-solid fa-rotate-right"></i>
+                  </button>
+                  <button 
                     class="btn btn-xs btn-outline-danger"
                     :disabled="deletingKey === getGameKey(game)"
                     title="Remove game from library"
@@ -224,9 +233,13 @@ defineProps({
     type: String,
     default: null,
   },
+  recheckingKey: {
+    type: String,
+    default: null,
+  },
 });
 
-defineEmits(['open-add-game', 'trigger-prefill', 'add-to-library', 'remove-from-library', 'refresh-cached', 'delete-cached-game', 'toggle-game-autoupdate']);
+defineEmits(['open-add-game', 'trigger-prefill', 'recheck-game', 'add-to-library', 'remove-from-library', 'refresh-cached', 'delete-cached-game', 'toggle-game-autoupdate']);
 
 function getGameKey(game) {
   if (!game) return '';
