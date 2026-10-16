@@ -39,13 +39,10 @@ FROM alpine:3.21 AS runner
 RUN apk add --no-cache ca-certificates tzdata
 
 # Create working data directories
-RUN mkdir -p /data/cache /etc/artesian
+RUN mkdir -p /data/cache /data/manifests
 
 # Copy compiled binary from builder
 COPY --from=backend-builder /build/artesian /usr/local/bin/artesian
-
-# Copy sample configuration into default path
-COPY configs/artesian.example.yaml /etc/artesian/artesian.yaml
 
 # DNS (53 udp/tcp), HTTP Proxy (80 tcp), Web UI & API (8080 tcp)
 EXPOSE 53/udp 53/tcp 80 8080
@@ -55,4 +52,4 @@ VOLUME ["/data"]
 WORKDIR /
 
 ENTRYPOINT ["/usr/local/bin/artesian"]
-CMD ["-config", "/etc/artesian/artesian.yaml"]
+CMD ["-db", "/data/artesian.db"]

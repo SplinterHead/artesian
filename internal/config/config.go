@@ -1,80 +1,85 @@
 package config
 
 import (
-	"os"
+	"strconv"
+	"strings"
 	"time"
+
+	"artesian/internal/db"
 )
 
 // Config encapsulates all configuration options for Artesian
 type Config struct {
-	Server    ServerConfig    `json:"server" yaml:"server"`
-	DNS       DNSConfig       `json:"dns" yaml:"dns"`
-	Proxy     ProxyConfig     `json:"proxy" yaml:"proxy"`
-	Cache     CacheConfig     `json:"cache" yaml:"cache"`
-	Database  DatabaseConfig  `json:"database" yaml:"database"`
-	Services  ServicesConfig  `json:"services" yaml:"services"`
-	Scheduler SchedulerConfig `json:"scheduler" yaml:"scheduler"`
+	Server    ServerConfig    `json:"server"`
+	DNS       DNSConfig       `json:"dns"`
+	Proxy     ProxyConfig     `json:"proxy"`
+	Cache     CacheConfig     `json:"cache"`
+	Database  DatabaseConfig  `json:"database"`
+	Services  ServicesConfig  `json:"services"`
+	Scheduler SchedulerConfig `json:"scheduler"`
 }
 
 // ServerConfig defines the web management UI & API settings
 type ServerConfig struct {
-	ListenAddr string `json:"listen_addr" yaml:"listen_addr"` // e.g. ":8080"
-	EnableAuth bool   `json:"enable_auth" yaml:"enable_auth"`
-	APIKey     string `json:"api_key" yaml:"api_key"`
+	ListenAddr string `json:"listen_addr"` // e.g. ":8080"
+	EnableAuth bool   `json:"enable_auth"`
+	APIKey     string `json:"api_key"`
 }
 
 // DNSConfig controls the embedded DNS forwarder and interception rules
 type DNSConfig struct {
-	Enabled       bool     `json:"enabled" yaml:"enabled"`
-	ListenAddr    string   `json:"listen_addr" yaml:"listen_addr"`       // e.g. ":53"
-	UpstreamDNS   []string `json:"upstream_dns" yaml:"upstream_dns"`     // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
-	InterceptIPv4 string   `json:"intercept_ipv4" yaml:"intercept_ipv4"` // Target proxy IP address
-	InterceptIPv6 string   `json:"intercept_ipv6" yaml:"intercept_ipv6"`
+	Enabled       bool     `json:"enabled"`
+	ListenAddr    string   `json:"listen_addr"`       // e.g. ":53"
+	UpstreamDNS   []string `json:"upstream_dns"`     // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
+	InterceptIPv4 string   `json:"intercept_ipv4"` // Target proxy IP address
+	InterceptIPv6 string   `json:"intercept_ipv6"`
 }
 
 // ProxyConfig defines the HTTP reverse proxy parameters
 type ProxyConfig struct {
-	ListenAddr      string        `json:"listen_addr" yaml:"listen_addr"` // e.g. ":80"
-	ReadTimeout     time.Duration `json:"read_timeout" yaml:"read_timeout"`
-	WriteTimeout    time.Duration `json:"write_timeout" yaml:"write_timeout"`
-	MaxConnsPerHost int           `json:"max_conns_per_host" yaml:"max_conns_per_host"`
+	ListenAddr      string        `json:"listen_addr"` // e.g. ":80"
+	ReadTimeout     time.Duration `json:"read_timeout"`
+	WriteTimeout    time.Duration `json:"write_timeout"`
+	MaxConnsPerHost int           `json:"max_conns_per_host"`
 }
 
 // CacheConfig controls disk storage, chunk layout, and retention
 type CacheConfig struct {
-	StorageDir   string `json:"storage_dir" yaml:"storage_dir"` // e.g. "./data/cache"
-	MaxSizeBytes int64  `json:"max_size_bytes" yaml:"max_size_bytes"`
-	MinFreeDisk  int64  `json:"min_free_disk_bytes" yaml:"min_free_disk_bytes"`
-	ChunkSize    int64  `json:"chunk_size_bytes" yaml:"chunk_size_bytes"`
+	StorageDir    string `json:"storage_dir"`       // e.g. "/data/cache"
+	ManifestDir   string `json:"manifest_dir"`     // e.g. "/data/manifests"
+	DepotCacheDir string `json:"depotcache_dir"` // e.g. "/data/steam_depotcache"
+	MaxSizeBytes  int64  `json:"max_size_bytes"`
+	MinFreeDisk   int64  `json:"min_free_disk_bytes"`
+	ChunkSize     int64  `json:"chunk_size_bytes"`
 }
 
 // DatabaseConfig specifies the SQLite persistence database
 type DatabaseConfig struct {
-	Path string `json:"path" yaml:"path"` // e.g. "./data/artesian.db"
+	Path string `json:"path"` // e.g. "/data/artesian.db"
 }
 
 // ServicesConfig lists enabled game platforms
 type ServicesConfig struct {
-	Steam     ServiceSettings `json:"steam" yaml:"steam"`
-	EpicGames ServiceSettings `json:"epicgames" yaml:"epicgames"`
-	Blizzard  ServiceSettings `json:"blizzard" yaml:"blizzard"`
-	Riot      ServiceSettings `json:"riot" yaml:"riot"`
-	Xbox      ServiceSettings `json:"xbox" yaml:"xbox"`
+	Steam     ServiceSettings `json:"steam"`
+	EpicGames ServiceSettings `json:"epicgames"`
+	Blizzard  ServiceSettings `json:"blizzard"`
+	Riot      ServiceSettings `json:"riot"`
+	Xbox      ServiceSettings `json:"xbox"`
 }
 
 // ServiceSettings controls a specific platform's behavior
 type ServiceSettings struct {
-	Enabled      bool     `json:"enabled" yaml:"enabled"`
-	Domains      []string `json:"domains" yaml:"domains"`
-	AutoUpdate   bool     `json:"auto_update" yaml:"auto_update"`
-	PrefillHours int      `json:"prefill_hours" yaml:"prefill_hours"`
+	Enabled      bool     `json:"enabled"`
+	Domains      []string `json:"domains"`
+	AutoUpdate   bool     `json:"auto_update"`
+	PrefillHours int      `json:"prefill_hours"`
 }
 
 // SchedulerConfig controls periodic tasks and cron timers
 type SchedulerConfig struct {
-	Enabled       bool   `json:"enabled" yaml:"enabled"`
-	UpdateCron    string `json:"update_cron" yaml:"update_cron"`       // e.g. "0 */4 * * *"
-	CacheSyncCron string `json:"cache_sync_cron" yaml:"cache_sync_cron"` // e.g. "0 2 * * *"
+	Enabled       bool   `json:"enabled"`
+	UpdateCron    string `json:"update_cron"`       // e.g. "0 */10 * * * *"
+	CacheSyncCron string `json:"cache_sync_cron"` // e.g. "0 0 3 * * *"
 }
 
 // DefaultConfig returns safe out-of-the-box defaults
@@ -97,13 +102,15 @@ func DefaultConfig() *Config {
 			MaxConnsPerHost: 100,
 		},
 		Cache: CacheConfig{
-			StorageDir:   "./data/cache",
-			MaxSizeBytes: 2 * 1024 * 1024 * 1024 * 1024, // 2 TB
-			MinFreeDisk:  50 * 1024 * 1024 * 1024,       // 50 GB
-			ChunkSize:    1024 * 1024,                   // 1 MB
+			StorageDir:    "/data/cache",
+			ManifestDir:   "/data/manifests",
+			DepotCacheDir: "/data/steam_depotcache",
+			MaxSizeBytes:  2 * 1024 * 1024 * 1024 * 1024, // 2 TB
+			MinFreeDisk:   50 * 1024 * 1024 * 1024,       // 50 GB
+			ChunkSize:     1024 * 1024,                   // 1 MB
 		},
 		Database: DatabaseConfig{
-			Path: "./data/artesian.db",
+			Path: "/data/artesian.db",
 		},
 		Services: ServicesConfig{
 			Steam: ServiceSettings{
@@ -131,7 +138,7 @@ func DefaultConfig() *Config {
 					"*.dist.blizzard.com",
 					"*.cdn.blizzard.com",
 				},
-				AutoUpdate: false,
+				AutoUpdate: true,
 			},
 			Riot: ServiceSettings{
 				Enabled: true,
@@ -139,7 +146,7 @@ func DefaultConfig() *Config {
 					"*.dyn.riotcdn.net",
 					"*.content.riotgames.com",
 				},
-				AutoUpdate: false,
+				AutoUpdate: true,
 			},
 			Xbox: ServiceSettings{
 				Enabled: true,
@@ -147,22 +154,86 @@ func DefaultConfig() *Config {
 					"*.assets1.xboxlive.com",
 					"*.delivery.mp.microsoft.com",
 				},
-				AutoUpdate: false,
+				AutoUpdate: true,
 			},
 		},
 		Scheduler: SchedulerConfig{
 			Enabled:       true,
-			UpdateCron:    "0 */4 * * *", // Every 4 hours
-			CacheSyncCron: "0 3 * * *",   // 3 AM daily
+			UpdateCron:    "0 */10 * * * *", // Every 10 minutes
+			CacheSyncCron: "0 0 3 * * *",    // 3 AM daily
 		},
 	}
 }
 
-// LoadConfig loads configuration from path or returns defaults
-func LoadConfig(path string) (*Config, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return DefaultConfig(), nil
+// LoadFromDB loads configuration directly from SQLite database settings with safe fallbacks
+func LoadFromDB(database *db.DB) *Config {
+	cfg := DefaultConfig()
+	if database == nil {
+		return cfg
 	}
-	// Future extension: unmarshal YAML/JSON config file
-	return DefaultConfig(), nil
+
+	if upstreams := database.GetSetting("dns_upstreams", ""); upstreams != "" {
+		parts := strings.Split(upstreams, ",")
+		var cleaned []string
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		if len(cleaned) > 0 {
+			cfg.DNS.UpstreamDNS = cleaned
+		}
+	}
+
+	if listen := database.GetSetting("dns_listen_addr", ""); listen != "" {
+		cfg.DNS.ListenAddr = listen
+	}
+	if enabled := database.GetSetting("dns_enabled", ""); enabled != "" {
+		cfg.DNS.Enabled = (enabled == "true" || enabled == "1")
+	}
+	if ip := database.GetSetting("dns_intercept_ipv4", ""); ip != "" {
+		cfg.DNS.InterceptIPv4 = ip
+	}
+	if storage := database.GetSetting("storage_path", ""); storage != "" {
+		cfg.Cache.StorageDir = storage
+	}
+	if manifest := database.GetSetting("manifest_dir", ""); manifest != "" {
+		cfg.Cache.ManifestDir = manifest
+	}
+	if depotcache := database.GetSetting("depotcache_dir", ""); depotcache != "" {
+		cfg.Cache.DepotCacheDir = depotcache
+	}
+	if sListen := database.GetSetting("server_listen_addr", ""); sListen != "" {
+		cfg.Server.ListenAddr = sListen
+	}
+	if pListen := database.GetSetting("proxy_listen_addr", ""); pListen != "" {
+		cfg.Proxy.ListenAddr = pListen
+	}
+	if maxBytes := database.GetSetting("cache_max_size_bytes", ""); maxBytes != "" {
+		if v, err := strconv.ParseInt(maxBytes, 10, 64); err == nil && v > 0 {
+			cfg.Cache.MaxSizeBytes = v
+		}
+	}
+	if minFree := database.GetSetting("cache_min_free_disk", ""); minFree != "" {
+		if v, err := strconv.ParseInt(minFree, 10, 64); err == nil && v > 0 {
+			cfg.Cache.MinFreeDisk = v
+		}
+	}
+	if chunkSize := database.GetSetting("cache_chunk_size", ""); chunkSize != "" {
+		if v, err := strconv.ParseInt(chunkSize, 10, 64); err == nil && v > 0 {
+			cfg.Cache.ChunkSize = v
+		}
+	}
+	if schedEnabled := database.GetSetting("scheduler_enabled", ""); schedEnabled != "" {
+		cfg.Scheduler.Enabled = (schedEnabled == "true" || schedEnabled == "1")
+	}
+
+	cfg.Services.Steam.AutoUpdate = database.GetServiceAutoUpdate("steam")
+	cfg.Services.EpicGames.AutoUpdate = database.GetServiceAutoUpdate("epic")
+	cfg.Services.Blizzard.AutoUpdate = database.GetServiceAutoUpdate("blizzard")
+	cfg.Services.Riot.AutoUpdate = database.GetServiceAutoUpdate("riot")
+	cfg.Services.Xbox.AutoUpdate = database.GetServiceAutoUpdate("xbox")
+
+	return cfg
 }
+
