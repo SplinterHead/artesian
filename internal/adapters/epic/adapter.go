@@ -63,11 +63,11 @@ var (
 	_ ports.PlatformAdapter = (*Adapter)(nil)
 )
 
-// HashAppName creates a stable positive 63-bit int64 from an Epic appName
+// HashAppName creates a stable positive 53-bit int64 from an Epic appName safe for JavaScript JSON numbers
 func HashAppName(appName string) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(appName))
-	val := int64(h.Sum64() & 0x7FFFFFFFFFFFFFFF)
+	val := int64(h.Sum64() & 0x001FFFFFFFFFFFFF)
 	if val <= 0 {
 		return 1
 	}

@@ -255,7 +255,11 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 		job.EndedAt = time.Now()
 		m.finalizeAppStatus(job.AppID, job.Service, job.AppName, "monitoring")
 		m.broadcastProgress(job)
-		log.Printf("[Prefill Engine] App %d (%s): Status set to monitoring (authenticate Steam account or install via client to enable caching).", job.AppID, job.AppName)
+		serviceName := "Steam"
+		if adapter, ok := m.registry.Get(job.Service); ok {
+			serviceName = adapter.DisplayName()
+		}
+		log.Printf("[Prefill Engine] App %d (%s): Status set to monitoring (authenticate %s account or install via client to enable caching).", job.AppID, job.AppName, serviceName)
 		return
 	}
 
@@ -472,7 +476,11 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 		if err != nil {
 			continue
 		}
-		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		if service == "epic" {
+			req.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
+		} else {
+			req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		}
 		req.Header.Set("X-Artesian-Prefill", "1")
 		req.Header.Set("X-Artesian-Loop", "1")
 
@@ -531,6 +539,12 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 				log.Printf("[Prefill Engine] Could not fetch remote depot metadata for app %d: %v", appID, err)
 			} else {
 				log.Printf("[Prefill Engine] App %d (%s): Remote depot metadata query completed successfully", appID, job.AppName)
+				// Check if app_id was repaired in watched_apps
+				var updatedAppID int64
+				if err := m.db.QueryRow("SELECT app_id FROM watched_apps WHERE name = ? AND service = ? LIMIT 1", job.AppName, job.Service).Scan(&updatedAppID); err == nil && updatedAppID > 0 {
+					appID = updatedAppID
+					job.AppID = updatedAppID
+				}
 			}
 		}
 	}
@@ -556,7 +570,11 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 	}
 
 	if len(allDepots) == 0 {
-		log.Printf("[Prefill Engine] No depot metadata available for app %d (%s). Waiting for game install/update via Steam client to capture manifests.", appID, job.AppName)
+		serviceName := "Steam"
+		if adapter != nil {
+			serviceName = adapter.DisplayName()
+		}
+		log.Printf("[Prefill Engine] No depot metadata available for app %d (%s). Waiting for game install/update via %s client to capture manifests.", appID, job.AppName, serviceName)
 	}
 
 	// Filter depots by targetPlatform if specified (e.g. "Windows, Mac")
@@ -650,7 +668,11 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		}
 
 		if len(depotChunks) == 0 {
-			log.Printf("[Prefill Engine] Notice: No genuine manifest resolved for depot %d (manifest %d). Waiting for game install/update via Steam client.", d.depotID, d.manifestID)
+			serviceName := "Steam"
+			if adapter != nil {
+				serviceName = adapter.DisplayName()
+			}
+			log.Printf("[Prefill Engine] Notice: No genuine manifest resolved for depot %d (manifest %d). Waiting for game install/update via %s client.", d.depotID, d.manifestID, serviceName)
 		}
 
 		chunks = append(chunks, depotChunks...)

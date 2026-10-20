@@ -174,7 +174,7 @@ This file provides critical architectural context, developer guidelines, convent
 - Filters out Unreal Engine marketplace items (`namespace == "ue"`).
 - Resolves human-readable titles, box art, and platform support by querying `GET /catalog/api/shared/namespace/{namespace}/bulk/items` in batches of 50.
 - Caches catalog information in SQLite `game_meta_cache`.
-- Produces stable positive 63-bit `app_id` integers via `HashAppName` (`fnv64a(appName) & 0x7FFFFFFFFFFFFFFF`).
+- Produces stable positive 53-bit `app_id` integers via `HashAppName` (`fnv64a(appName) & 0x001FFFFFFFFFFFFF`), guaranteeing full precision in JavaScript JSON numbers (`Number.MAX_SAFE_INTEGER`).
 
 ### Binary Manifest Parsing & Chunk Resolution (`manifest.go`, `metadata.go`, `content.go`)
 - Queries asset manifests via `GET /launcher/api/public/assets/v2/platform/Windows/namespace/{namespace}/catalogItem/{catalogItemId}/app/{appName}/label/Live`.

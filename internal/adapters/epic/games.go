@@ -101,6 +101,8 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 	var discoveredGames []ports.AccountGame
 
 	// Check existing in-memory cache and SQLite cache first to avoid redundant network lookups
+	var knownInfos []*EpicGameInfo
+
 	a.gamesMu.RLock()
 	for _, item := range assets {
 		if strings.EqualFold(item.Namespace, "ue") || item.AppName == "" || item.CatalogItemID == "" {
@@ -136,6 +138,15 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 					Name:      name,
 					Platforms: plats,
 				})
+				knownInfos = append(knownInfos, &EpicGameInfo{
+					AppID:         appID,
+					AppName:       item.AppName,
+					CatalogItemID: item.CatalogItemID,
+					Namespace:     item.Namespace,
+					Title:         name,
+					BuildVersion:  item.BuildVersion,
+					Platforms:     plats,
+				})
 				continue
 			}
 		}
@@ -148,6 +159,16 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 		})
 	}
 	a.gamesMu.RUnlock()
+
+	if len(knownInfos) > 0 {
+		a.gamesMu.Lock()
+		for _, info := range knownInfos {
+			a.gamesCache[info.AppID] = info
+			a.gamesByName[strings.ToLower(info.AppName)] = info
+			a.gamesByName[strings.ToLower(info.Title)] = info
+		}
+		a.gamesMu.Unlock()
+	}
 
 	// 3. Resolve uncached titles from Epic Catalog bulk API concurrently
 	if len(uncachedItems) > 0 {

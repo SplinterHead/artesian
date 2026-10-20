@@ -70,7 +70,7 @@ func ParseManifest(data []byte) (*ParsedManifest, error) {
 
 // ParseBinaryManifest parses a zlib-compressed binary Epic manifest (.manifest)
 func ParseBinaryManifest(data []byte) (*ParsedManifest, error) {
-	if len(data) < 41 {
+	if len(data) < 37 {
 		return nil, fmt.Errorf("epic manifest data too short (%d bytes)", len(data))
 	}
 
@@ -80,7 +80,6 @@ func ParseBinaryManifest(data []byte) (*ParsedManifest, error) {
 		SizeUncompressed: binary.LittleEndian.Uint32(data[8:12]),
 		SizeCompressed:   binary.LittleEndian.Uint32(data[12:16]),
 		StoredAs:         data[36],
-		Version:          binary.LittleEndian.Uint32(data[37:41]),
 	}
 	copy(header.SHAHash[:], data[16:36])
 
@@ -89,11 +88,12 @@ func ParseBinaryManifest(data []byte) (*ParsedManifest, error) {
 	}
 
 	headerSize := int(header.HeaderSize)
-	if headerSize < 41 {
-		headerSize = 41
+	if headerSize < 37 || headerSize >= len(data) {
+		return nil, fmt.Errorf("invalid header size %d for data length %d", headerSize, len(data))
 	}
-	if headerSize >= len(data) {
-		return nil, fmt.Errorf("header size %d exceeds data length %d", headerSize, len(data))
+
+	if headerSize >= 41 && len(data) >= 41 {
+		header.Version = binary.LittleEndian.Uint32(data[37:41])
 	}
 
 	compressedData := data[headerSize:]
@@ -126,58 +126,52 @@ func parseDecompressedPayload(payload []byte, headerVersion uint32) (*ParsedMani
 		return nil, fmt.Errorf("decompressed manifest payload too short (%d bytes)", len(payload))
 	}
 
-	offset := 0
-
 	// 1. Section 1: ManifestMeta
-	if offset+4 > len(payload) {
-		return nil, fmt.Errorf("unexpected EOF reading meta section size")
+	// In the Epic binary manifest format, the first 4 bytes indicate the total size of Section 1
+	// measured from offset 0, meaning Section 2 begins at exactly metaSize.
+	metaSize := int(binary.LittleEndian.Uint32(payload[0:4]))
+	if metaSize < 4 || metaSize > len(payload) {
+		return nil, fmt.Errorf("invalid meta section size %d (payload len %d)", metaSize, len(payload))
 	}
-	metaSize := int(binary.LittleEndian.Uint32(payload[offset : offset+4]))
-	offset += 4
 
 	featureLevel := int32(headerVersion)
-	if metaSize >= 5 && offset+5 <= len(payload) {
-		// offset+0: dataVersion uint8
-		// offset+1..5: featureLevel int32
-		fl := int32(binary.LittleEndian.Uint32(payload[offset+1 : offset+5]))
+	// payload[4]: dataVersion (EManifestMetaVersion)
+	// payload[5:9]: featureLevel (int32)
+	if metaSize >= 9 {
+		fl := int32(binary.LittleEndian.Uint32(payload[5:9]))
 		if fl > 0 {
 			featureLevel = fl
 		}
 	}
 
-	// Advance past ManifestMeta section
-	offset += metaSize
-	if offset >= len(payload) {
-		return nil, fmt.Errorf("unexpected EOF after meta section")
-	}
-
-	// Determine chunk subdirectory based on FeatureLevel
+	// Determine chunk subdirectory based on FeatureLevel:
+	// < 3: Chunks, < 6: ChunksV2, < 15: ChunksV3, >= 15: ChunksV4
 	chunksSubdir := "ChunksV4"
-	if featureLevel < 13 {
+	if featureLevel < 3 {
 		chunksSubdir = "Chunks"
-	} else if featureLevel <= 14 {
+	} else if featureLevel < 6 {
 		chunksSubdir = "ChunksV2"
-	} else if featureLevel <= 17 {
+	} else if featureLevel < 15 {
 		chunksSubdir = "ChunksV3"
 	} else {
 		chunksSubdir = "ChunksV4"
 	}
 
-	// 2. Section 2: ChunkDataList
-	if offset+4 > len(payload) {
-		return nil, fmt.Errorf("unexpected EOF reading chunk data section size")
+	// 2. Section 2: ChunkDataList begins at exactly metaSize
+	chunkSectionStart := metaSize
+	if chunkSectionStart+9 > len(payload) {
+		return nil, fmt.Errorf("unexpected EOF reading chunk data section header (offset %d, payload %d)", chunkSectionStart, len(payload))
 	}
-	// chunkDataSectionSize := int(binary.LittleEndian.Uint32(payload[offset : offset+4]))
-	offset += 4
 
-	if offset+5 > len(payload) {
-		return nil, fmt.Errorf("unexpected EOF reading chunk count")
+	chunkSectionSize := int(binary.LittleEndian.Uint32(payload[chunkSectionStart : chunkSectionStart+4]))
+	if chunkSectionSize < 9 || chunkSectionStart+chunkSectionSize > len(payload) {
+		return nil, fmt.Errorf("invalid chunk section size %d at offset %d (payload %d)", chunkSectionSize, chunkSectionStart, len(payload))
 	}
-	// dataVersion := payload[offset]
-	offset++
 
-	chunkCount := int(binary.LittleEndian.Uint32(payload[offset : offset+4]))
-	offset += 4
+	// payload[chunkSectionStart+4] is dataVersion (EChunkDataListVersion)
+	// payload[chunkSectionStart+5 : chunkSectionStart+9] is elementCount (int32)
+	chunkCount := int(binary.LittleEndian.Uint32(payload[chunkSectionStart+5 : chunkSectionStart+9]))
+	dataOffset := chunkSectionStart + 9
 
 	if chunkCount <= 0 {
 		return &ParsedManifest{
@@ -188,29 +182,30 @@ func parseDecompressedPayload(payload []byte, headerVersion uint32) (*ParsedMani
 	}
 
 	// Struct of Arrays (SoA):
-	// GUIDs:        chunkCount * 16 bytes
-	// Hashes:       chunkCount * 8 bytes
-	// ShaHashes:    chunkCount * 20 bytes
-	// GroupNumbers: chunkCount * 1 byte
-	// WindowSizes:  chunkCount * 4 bytes
-	// FileSizes:    chunkCount * 8 bytes
-	guidOffset := offset
+	// GUIDs:                chunkCount * 16 bytes (4x uint32 LE)
+	// Hashes:               chunkCount * 8 bytes (uint64 LE)
+	// ShaHashes:            chunkCount * 20 bytes ([20]byte)
+	// GroupNumbers:         chunkCount * 1 byte (uint8)
+	// DataSizeUncompressed: chunkCount * 4 bytes (uint32 LE)
+	// FileSizes:            chunkCount * 8 bytes (int64 LE)
+	guidOffset := dataOffset
 	hashOffset := guidOffset + (chunkCount * 16)
 	shaOffset := hashOffset + (chunkCount * 8)
 	groupOffset := shaOffset + (chunkCount * 20)
-	windowOffset := groupOffset + (chunkCount * 1)
-	fileSizeOffset := windowOffset + (chunkCount * 4)
+	uncompressedOffset := groupOffset + (chunkCount * 1)
+	fileSizeOffset := uncompressedOffset + (chunkCount * 4)
 	endOffset := fileSizeOffset + (chunkCount * 8)
 
-	if endOffset > len(payload) {
-		return nil, fmt.Errorf("chunk data arrays exceed payload length (%d > %d)", endOffset, len(payload))
+	if endOffset > chunkSectionStart+chunkSectionSize || endOffset > len(payload) {
+		return nil, fmt.Errorf("chunk data arrays exceed section length (needed %d, section has %d, payload %d, chunkCount %d)",
+			endOffset, chunkSectionStart+chunkSectionSize, len(payload), chunkCount)
 	}
 
 	chunks := make([]EpicChunk, chunkCount)
 	var totalSize int64
 
 	for i := 0; i < chunkCount; i++ {
-		// Read 16-byte GUID (4x uint32 little endian)
+		// Read 16-byte GUID (4x uint32 little endian: A, B, C, D)
 		gBase := guidOffset + (i * 16)
 		g0 := binary.LittleEndian.Uint32(payload[gBase : gBase+4])
 		g1 := binary.LittleEndian.Uint32(payload[gBase+4 : gBase+8])
@@ -231,7 +226,12 @@ func parseDecompressedPayload(payload []byte, headerVersion uint32) (*ParsedMani
 		fBase := fileSizeOffset + (i * 8)
 		fSize := int64(binary.LittleEndian.Uint64(payload[fBase : fBase+8]))
 		if fSize <= 0 {
-			fSize = 1048576 // 1 MB default if unspecified
+			uSize := int64(binary.LittleEndian.Uint32(payload[uncompressedOffset+(i*4) : uncompressedOffset+(i*4)+4]))
+			if uSize > 0 {
+				fSize = uSize
+			} else {
+				fSize = 1048576 // 1 MB default
+			}
 		}
 		totalSize += fSize
 

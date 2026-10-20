@@ -112,6 +112,73 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 		a.gamesMu.RUnlock()
 	}
 
+	if info == nil && a.db != nil {
+		var appName string
+		_ = a.db.QueryRow("SELECT name FROM watched_apps WHERE app_id = ? AND service = ? LIMIT 1", appID, a.ID()).Scan(&appName)
+		if appName != "" {
+			a.gamesMu.RLock()
+			info = a.gamesByName[strings.ToLower(appName)]
+			if info == nil {
+				for _, g := range a.gamesCache {
+					if strings.EqualFold(g.Title, appName) || strings.EqualFold(g.AppName, appName) {
+						info = g
+						break
+					}
+				}
+			}
+			a.gamesMu.RUnlock()
+
+			if info != nil {
+				// Repair any precision-corrupted app_id in watched_apps
+				_, _ = a.db.Exec("UPDATE watched_apps SET app_id = ? WHERE app_id = ? AND service = ?", info.AppID, appID, a.ID())
+				appID = info.AppID
+			}
+		}
+	}
+
+	if info == nil {
+		// Robust fallback: fetch launcher assets directly to ensure a.gamesCache is populated
+		assetsURL := "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/public/assets/Windows?label=Live"
+		req, err := http.NewRequest("GET", assetsURL, nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
+			if resp, err := a.httpClient.Do(req); err == nil && resp.StatusCode == http.StatusOK {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				var assets []launcherAssetItem
+				if json.Unmarshal(bodyBytes, &assets) == nil {
+					a.gamesMu.Lock()
+					for _, item := range assets {
+						hID := HashAppName(item.AppName)
+						title := item.AppName
+						if a.db != nil {
+							if dbName, _, err := a.db.GetGameMeta(fmt.Sprintf("epic_%d", hID)); err == nil && dbName != "" {
+								title = dbName
+							}
+						}
+						gInfo := &EpicGameInfo{
+							AppID:         hID,
+							AppName:       item.AppName,
+							CatalogItemID: item.CatalogItemID,
+							Namespace:     item.Namespace,
+							Title:         title,
+							BuildVersion:  item.BuildVersion,
+							Platforms:     []string{"Windows"},
+						}
+						a.gamesCache[hID] = gInfo
+						a.gamesByName[strings.ToLower(item.AppName)] = gInfo
+						a.gamesByName[strings.ToLower(title)] = gInfo
+						if hID == appID {
+							info = gInfo
+						}
+					}
+					a.gamesMu.Unlock()
+				}
+			}
+		}
+	}
+
 	if info == nil {
 		return fmt.Errorf("epic game info not found for app ID %d", appID)
 	}
@@ -240,12 +307,16 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 
 	// Persist to SQLite depot_meta_cache and depot_manifest_chunks
 	if a.db != nil {
+		plat := "Windows"
+		if len(info.Platforms) > 0 {
+			plat = strings.Join(info.Platforms, ", ")
+		}
 		meta := db.DepotMeta{
 			DepotID:     appID,
 			AppID:       appID,
 			Service:     a.ID(),
 			GameTitle:   info.Title,
-			Platform:    "Windows",
+			Platform:    plat,
 			TotalSize:   parsed.TotalSize,
 			ManifestID:  1,
 			LastUpdated: time.Now(),
