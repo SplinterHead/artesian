@@ -143,20 +143,17 @@ defineProps({
 const emit = defineEmits([
   'toggle-monitoring', 
   'toggle-autoupdate',
-  'open-steam-login', 
+  'open-login',
   'open-steam-2fa',
-  'open-epic-login',
   'logout-service',
   'switch-tab', 
 ]);
 
 function handleConnectButtonClick(svc) {
-  if (svc.id === 'epic') {
-    emit('open-epic-login');
-  } else if (svc.status === 'awaiting_2fa') {
+  if (svc.id === 'steam' && svc.status === 'awaiting_2fa') {
     emit('open-steam-2fa');
   } else {
-    emit('open-steam-login');
+    emit('open-login', svc);
   }
 }
 

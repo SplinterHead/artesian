@@ -60,20 +60,23 @@
         :services-list="servicesList" 
         @toggle-monitoring="toggleServiceMonitoring"
         @toggle-autoupdate="handleToggleServiceAutoUpdate"
-        @open-steam-login="handleOpenSteamLogin"
+        @open-login="handleOpenLoginModal"
+        @open-steam-login="handleOpenLoginModal"
         @open-steam-2fa="openSteam2FAModal"
-        @open-epic-login="openEpicLoginModal"
         @logout-service="handleLogoutService"
-        @logout-steam="logoutSteam"
+        @logout-steam="handleLogoutService('steam')"
         @switch-tab="currentTab = $event"
       />
     </main>
 
     <!-- Modal Dialogs -->
-    <SteamLoginModal 
+    <PlatformLoginModal 
       v-model="showLoginModal" 
+      :service="activeLoginService.id"
+      :service-name="activeLoginService.display_name"
       :loading="loggingIn" 
-      @submit="handleSteamLogin"
+      :error-msg="loginError"
+      @submit="handlePlatformLogin"
     />
 
     <Steam2FAModal 
@@ -85,13 +88,6 @@
       @submit="submit2FACode"
       @dismiss="show2FAModal = false"
       @switch-account="handleRestartSteamLogin"
-    />
-
-    <EpicLoginModal
-      v-model="showEpicLoginModal"
-      :loading="loggingInEpic"
-      :error-msg="epicLoginError"
-      @submit="handleEpicLogin"
     />
 
     <AddGameModal 
@@ -135,9 +131,8 @@ import SettingsView from './views/SettingsView.vue';
 import AccountsView from './views/AccountsView.vue';
 
 // Modal Components
-import SteamLoginModal from './components/modals/SteamLoginModal.vue';
+import PlatformLoginModal from './components/modals/PlatformLoginModal.vue';
 import Steam2FAModal from './components/modals/Steam2FAModal.vue';
-import EpicLoginModal from './components/modals/EpicLoginModal.vue';
 import AddGameModal from './components/modals/AddGameModal.vue';
 import ConfirmDeleteModal from './components/modals/ConfirmDeleteModal.vue';
 
@@ -175,7 +170,8 @@ const stats = ref({
 // Services State
 const servicesList = ref(DEFAULT_SERVICES);
 
-// Steam Auth State
+// Authentication State
+const activeLoginService = ref({ id: 'steam', display_name: 'Steam' });
 const steamStatus = ref({
   state: 'disconnected',
   username: '',
@@ -186,29 +182,19 @@ const show2FAModal = ref(false);
 const loginUsername = ref('');
 const loginPassword = ref('');
 const loggingIn = ref(false);
+const loginError = ref('');
 const verifying2FA = ref(false);
 
 watch(showLoginModal, (isOpen) => {
   if (!isOpen) {
     loggingIn.value = false;
+    loginError.value = '';
   }
 });
 
 watch(show2FAModal, (isOpen) => {
   if (!isOpen) {
     verifying2FA.value = false;
-  }
-});
-
-// Epic Auth State
-const showEpicLoginModal = ref(false);
-const loggingInEpic = ref(false);
-const epicLoginError = ref('');
-
-watch(showEpicLoginModal, (isOpen) => {
-  if (!isOpen) {
-    loggingInEpic.value = false;
-    epicLoginError.value = '';
   }
 });
 
@@ -280,6 +266,7 @@ const { wsConnected } = useWebSocket({
     }
     if (data.state === 'connected') {
       loggingIn.value = false;
+      loginError.value = '';
       showLoginModal.value = false;
       show2FAModal.value = false;
       fetchLibrary();
@@ -291,6 +278,7 @@ const { wsConnected } = useWebSocket({
     } else if (data.state === 'error') {
       loggingIn.value = false;
       show2FAModal.value = false;
+      loginError.value = data.error_message || 'Steam authentication error';
       if (data.error_message) {
         alert(data.error_message);
       }
@@ -318,14 +306,14 @@ const { wsConnected } = useWebSocket({
       epc.username = data.username;
     }
     if (data.state === 'connected') {
-      loggingInEpic.value = false;
-      showEpicLoginModal.value = false;
-      epicLoginError.value = '';
+      loggingIn.value = false;
+      showLoginModal.value = false;
+      loginError.value = '';
       fetchLibrary();
       fetchServices();
     } else if (data.state === 'error') {
-      loggingInEpic.value = false;
-      epicLoginError.value = data.error_message || 'Epic Games authentication failed';
+      loggingIn.value = false;
+      loginError.value = data.error_message || 'Epic Games authentication failed';
     }
   },
   'prefill:progress': (data) => {
@@ -494,80 +482,17 @@ async function fetchConfig() {
   } catch (e) {}
 }
 
-async function handleSteamLogin({ username, password }) {
-  loginUsername.value = username;
-  loginPassword.value = password;
-  loggingIn.value = true;
-  try {
-    const data = await api.steamLogin(username, password);
-    steamStatus.value = data.status;
-    const stm = servicesList.value.find(s => s.id === 'steam');
-    if (stm) {
-      stm.status = data.status.state;
-      stm.username = data.status.username;
-    }
+function handleOpenLoginModal(svc) {
+  const serviceObj = svc || { id: 'steam', display_name: 'Steam' };
+  activeLoginService.value = serviceObj;
+  loginError.value = '';
+  loggingIn.value = false;
 
-    if (data.status.state === 'awaiting_2fa') {
-      loggingIn.value = false;
-      showLoginModal.value = false;
-      show2FAModal.value = true;
-      return;
-    }
-    if (data.status.state === 'connected') {
-      loggingIn.value = false;
-      showLoginModal.value = false;
-      return;
-    }
+  const isSteamAwaiting2FA = serviceObj.id === 'steam' && (
+    steamStatus.value?.state === 'awaiting_2fa' || serviceObj.status === 'awaiting_2fa'
+  );
 
-    // Still connecting in the background: keep loading animation active and poll for resolution
-    const start = Date.now();
-    const pollInterval = setInterval(async () => {
-      if (!showLoginModal.value || !loggingIn.value) {
-        clearInterval(pollInterval);
-        return;
-      }
-      try {
-        const s = await api.getSteamStatus();
-        steamStatus.value = s;
-        if (stm) {
-          stm.status = s.state;
-          stm.username = s.username;
-        }
-        if (s.state === 'awaiting_2fa') {
-          clearInterval(pollInterval);
-          loggingIn.value = false;
-          showLoginModal.value = false;
-          show2FAModal.value = true;
-        } else if (s.state === 'connected') {
-          clearInterval(pollInterval);
-          loggingIn.value = false;
-          showLoginModal.value = false;
-        } else if (s.state === 'error' || s.state === 'disconnected') {
-          clearInterval(pollInterval);
-          loggingIn.value = false;
-          if (s.error_message) {
-            alert(s.error_message);
-          }
-        } else if (Date.now() - start > 15000) {
-          clearInterval(pollInterval);
-          loggingIn.value = false;
-        }
-      } catch {
-        clearInterval(pollInterval);
-        loggingIn.value = false;
-      }
-    }, 400);
-  } catch (err) {
-    loggingIn.value = false;
-    alert(err.message || 'Failed to authenticate with Steam');
-  }
-}
-
-function handleOpenSteamLogin() {
-  const isAwaiting2FA = steamStatus.value?.state === 'awaiting_2fa' || 
-    servicesList.value.some(s => s.id === 'steam' && s.status === 'awaiting_2fa');
-
-  if (isAwaiting2FA) {
+  if (isSteamAwaiting2FA) {
     showLoginModal.value = false;
     show2FAModal.value = true;
   } else {
@@ -582,7 +507,107 @@ function openSteam2FAModal() {
 
 function handleRestartSteamLogin() {
   show2FAModal.value = false;
+  activeLoginService.value = servicesList.value.find(s => s.id === 'steam') || { id: 'steam', display_name: 'Steam' };
+  loginError.value = '';
+  loggingIn.value = false;
   showLoginModal.value = true;
+}
+
+async function handlePlatformLogin(payload) {
+  const service = payload.service || activeLoginService.value.id || 'steam';
+  loginError.value = '';
+  loggingIn.value = true;
+
+  if (service === 'steam') {
+    loginUsername.value = payload.username;
+    loginPassword.value = payload.password;
+    try {
+      const data = await api.steamLogin(payload.username, payload.password);
+      steamStatus.value = data.status;
+      const stm = servicesList.value.find(s => s.id === 'steam');
+      if (stm) {
+        stm.status = data.status.state;
+        stm.username = data.status.username;
+      }
+
+      if (data.status.state === 'awaiting_2fa') {
+        loggingIn.value = false;
+        showLoginModal.value = false;
+        show2FAModal.value = true;
+        return;
+      }
+      if (data.status.state === 'connected') {
+        loggingIn.value = false;
+        showLoginModal.value = false;
+        fetchLibrary();
+        fetchServices();
+        return;
+      }
+
+      // Still connecting in the background: keep loading animation active and poll for resolution
+      const start = Date.now();
+      const pollInterval = setInterval(async () => {
+        if (!showLoginModal.value || !loggingIn.value) {
+          clearInterval(pollInterval);
+          return;
+        }
+        try {
+          const s = await api.getSteamStatus();
+          steamStatus.value = s;
+          if (stm) {
+            stm.status = s.state;
+            stm.username = s.username;
+          }
+          if (s.state === 'awaiting_2fa') {
+            clearInterval(pollInterval);
+            loggingIn.value = false;
+            showLoginModal.value = false;
+            show2FAModal.value = true;
+          } else if (s.state === 'connected') {
+            clearInterval(pollInterval);
+            loggingIn.value = false;
+            showLoginModal.value = false;
+            fetchLibrary();
+            fetchServices();
+          } else if (s.state === 'error' || s.state === 'disconnected') {
+            clearInterval(pollInterval);
+            loggingIn.value = false;
+            loginError.value = s.error_message || 'Steam login failed';
+          } else if (Date.now() - start > 15000) {
+            clearInterval(pollInterval);
+            loggingIn.value = false;
+          }
+        } catch {
+          clearInterval(pollInterval);
+          loggingIn.value = false;
+        }
+      }, 400);
+    } catch (err) {
+      loggingIn.value = false;
+      loginError.value = err.message || 'Failed to authenticate with Steam';
+    }
+  } else if (service === 'epic') {
+    try {
+      const res = await api.login('epic', payload.code, '');
+      const epc = servicesList.value.find(s => s.id === 'epic');
+      if (epc && res.status) {
+        epc.status = res.status.state;
+        epc.username = res.status.username;
+      }
+      if (res.status?.state === 'connected') {
+        showLoginModal.value = false;
+        loggingIn.value = false;
+        await fetchServices();
+        await fetchLibrary();
+      } else if (res.status?.state === 'error') {
+        loggingIn.value = false;
+        loginError.value = res.status.error_message || 'Failed to authenticate with Epic Games';
+      }
+    } catch (err) {
+      loggingIn.value = false;
+      loginError.value = err.message || 'Failed to authenticate with Epic Games';
+    }
+  }
 }
 
 async function submit2FACode(code) {
@@ -597,41 +622,6 @@ async function submit2FACode(code) {
     alert(err.message || 'Failed to verify Steam 2FA code. Please check the code and try again.');
   } finally {
     verifying2FA.value = false;
-  }
-}
-
-async function logoutSteam() {
-  await api.steamLogout();
-  fetchSteamStatus();
-}
-
-function openEpicLoginModal() {
-  epicLoginError.value = '';
-  showEpicLoginModal.value = true;
-}
-
-async function handleEpicLogin({ code }) {
-  loggingInEpic.value = true;
-  epicLoginError.value = '';
-  try {
-    const res = await api.login('epic', code, '');
-    const epc = servicesList.value.find(s => s.id === 'epic');
-    if (epc && res.status) {
-      epc.status = res.status.state;
-      epc.username = res.status.username;
-    }
-    if (res.status?.state === 'connected') {
-      showEpicLoginModal.value = false;
-      loggingInEpic.value = false;
-      await fetchServices();
-      await fetchLibrary();
-    } else if (res.status?.state === 'error') {
-      loggingInEpic.value = false;
-      epicLoginError.value = res.status.error_message || 'Failed to authenticate with Epic Games';
-    }
-  } catch (err) {
-    loggingInEpic.value = false;
-    epicLoginError.value = err.message || 'Failed to authenticate with Epic Games';
   }
 }
 

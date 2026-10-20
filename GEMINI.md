@@ -163,7 +163,7 @@ This file provides critical architectural context, developer guidelines, convent
 
 ## 6. Epic Games Adapter & Pipeline (`internal/adapters/epic/`)
 
-### Authentication & OAuth2 Launcher Emulation (`auth.go`, `EpicLoginModal.vue`)
+### Authentication & OAuth2 Launcher Emulation (`auth.go`, `PlatformLoginModal.vue`)
 - Emulates the official Windows Epic Games Launcher OAuth2 client credentials (`client_id = 34a02cf8f4414e29b15921876da36f9a`, `client_secret = daafbccc737745039dffe53d94fc76cf`).
 - User opens the official Epic authorization link in browser and pastes the resulting authorization code (or complete JSON payload) into Artesian.
 - Exchanged via `POST https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token` (`grant_type=authorization_code`).
@@ -240,7 +240,7 @@ docker compose ps
 | `internal/scheduler/scheduler.go` | robfig/cron background update check scheduler across all registered platform adapters |
 | `internal/db/db.go` | SQLite schema, watched apps, depot meta, chunk records, manifest chunks, auth sessions |
 | `internal/ws/hub.go` | Real-time WebSocket event broadcaster |
-| `web/src/components/modals/EpicLoginModal.vue` | Epic Games OAuth2 code login modal with direct authorization link |
+| `web/src/components/modals/PlatformLoginModal.vue` | Generic multi-store login modal supporting credentials & OAuth2 code flows |
 | `web/src/components/modals/AddGameModal.vue` | Multi-store Game Add modal with interactive text filter input |
 | `web/src/views/AccountsView.vue` | Accounts hub with multi-store connect/disconnect and monitoring toggles |
 | `web/src/views/StatsView.vue` | Dashboard with Active Downloads table, Artesian badge, progress bar |
