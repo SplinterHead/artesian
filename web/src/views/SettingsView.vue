@@ -33,7 +33,7 @@
         <small class="text-muted">The IP address returned to LAN clients for game CDN hostnames to direct traffic to the reverse proxy.</small>
         <div v-if="interceptIpInput === '127.0.0.1'" class="warning-callout mt-2">
           <i class="fa-solid fa-triangle-exclamation mr-1"></i>
-          <span><strong>Notice:</strong> Currently set to loopback (<code>127.0.0.1</code>). For remote LAN devices to route through Artesian, enter the LAN IP of this server (e.g. <code>192.168.86.x</code>) so client machines don't redirect to their own localhost.</span>
+          <span><strong>Notice:</strong> Currently set to loopback (<code>127.0.0.1</code>). For remote LAN devices to route through Artesian, enter the LAN IP of this server (e.g. <code>192.168.0.x</code>) so client machines don't redirect to their own localhost.</span>
         </div>
       </div>
 

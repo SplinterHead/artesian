@@ -39,8 +39,6 @@
                 <span class="status-dot-sm"></span>
                 {{ getServiceStatusText(svc) }}
               </span>
-              <span v-if="svc.auth_supported" class="tag tag-blue">AUTH INTEGRATION</span>
-              <span v-if="svc.prefill_supported" class="tag tag-purple">PREFILL READY</span>
             </div>
           </div>
         </div>
