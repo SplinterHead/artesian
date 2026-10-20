@@ -169,6 +169,9 @@ type Server struct {
 	// Dynamic upstream DNS resolution
 	dnsMu        sync.RWMutex
 	upstreamAddr string
+
+	// HTTPS transparent SNI pass-through proxy (:443)
+	sniProxy *SNIProxy
 }
 
 // isSelfOrLoopback checks if a host header targets Artesian itself
@@ -201,6 +204,9 @@ func (s *Server) SetUpstreamDNS(upstreams []string) {
 	s.dnsMu.Lock()
 	s.upstreamAddr = addr
 	s.dnsMu.Unlock()
+	if s.sniProxy != nil {
+		s.sniProxy.SetUpstreamDNS(addr)
+	}
 }
 
 // NewServer initializes the proxy engine
@@ -225,6 +231,7 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 	} else {
 		s.upstreamAddr = "1.1.1.1:53"
 	}
+	s.sniProxy = NewSNIProxy(":443", s.upstreamAddr)
 
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
@@ -399,9 +406,16 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 	return s
 }
 
-// Start runs the proxy listener
+// Start runs the proxy listener and transparent HTTPS SNI proxy
 func (s *Server) Start() error {
 	log.Printf("[Artesian Proxy] Core proxy engine online on %s", s.cfg.ListenAddr)
+	if s.sniProxy != nil {
+		go func() {
+			if err := s.sniProxy.Start(); err != nil {
+				log.Printf("[Artesian SNI Proxy] Notice: %v (running without port 443 pass-through)", err)
+			}
+		}()
+	}
 	return s.httpServer.ListenAndServe()
 }
 
@@ -411,6 +425,9 @@ func (s *Server) Close() error {
 	case <-s.closeCh:
 	default:
 		close(s.closeCh)
+	}
+	if s.sniProxy != nil {
+		_ = s.sniProxy.Stop()
 	}
 	s.wg.Wait()
 	if s.transport != nil {
