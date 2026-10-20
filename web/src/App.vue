@@ -602,6 +602,11 @@ async function handlePlatformLogin(payload) {
       } else if (res.status?.state === 'error') {
         loggingIn.value = false;
         loginError.value = res.status.error_message || 'Failed to authenticate with Epic Games';
+      } else {
+        loggingIn.value = false;
+        if (res.status?.state) {
+          loginError.value = res.status.error_message || `Authentication status: ${res.status.state}`;
+        }
       }
     } catch (err) {
       loggingIn.value = false;

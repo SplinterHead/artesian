@@ -66,6 +66,9 @@ func createUpstreamTransport(dnsCfg *config.DNSConfig) *http.Transport {
 			Resolver: &net.Resolver{
 				PreferGo: true,
 				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					if network == "" {
+						network = "udp"
+					}
 					var lastErr error
 					for _, u := range upstreams {
 						target := strings.TrimSpace(u)
@@ -76,7 +79,7 @@ func createUpstreamTransport(dnsCfg *config.DNSConfig) *http.Transport {
 							target += ":53"
 						}
 						d := net.Dialer{Timeout: 3 * time.Second}
-						conn, err := d.DialContext(ctx, "udp", target)
+						conn, err := d.DialContext(ctx, network, target)
 						if err == nil {
 							return conn, nil
 						}

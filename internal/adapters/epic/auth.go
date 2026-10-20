@@ -293,11 +293,14 @@ func (a *Adapter) restoreSavedSession() {
 	// Refresh token in background to verify active session
 	go func() {
 		a.authMu.Lock()
-		defer a.authMu.Unlock()
-		if err := a.refreshAccessTokenLocked(); err != nil {
+		err := a.refreshAccessTokenLocked()
+		username := a.username
+		a.authMu.Unlock()
+
+		if err != nil {
 			log.Printf("[Epic Auth] Could not restore saved session: %v", err)
 		} else {
-			log.Printf("[Epic Auth] Restored genuine Epic Games session for %s", a.username)
+			log.Printf("[Epic Auth] Restored genuine Epic Games session for %s", username)
 		}
 		a.broadcastStatus()
 	}()

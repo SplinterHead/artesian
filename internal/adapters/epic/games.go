@@ -1,13 +1,17 @@
 package epic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"artesian/internal/ports"
 )
@@ -93,124 +97,189 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 		namespace     string
 		buildVersion  string
 	}
-	itemsByNamespace := make(map[string][]pendingItem)
+	var uncachedItems []pendingItem
+	var discoveredGames []ports.AccountGame
 
+	// Check existing in-memory cache and SQLite cache first to avoid redundant network lookups
+	a.gamesMu.RLock()
 	for _, item := range assets {
 		if strings.EqualFold(item.Namespace, "ue") || item.AppName == "" || item.CatalogItemID == "" {
 			continue
 		}
-		itemsByNamespace[item.Namespace] = append(itemsByNamespace[item.Namespace], pendingItem{
+		appID := HashAppName(item.AppName)
+		if cached, exists := a.gamesCache[appID]; exists && cached.Title != "" {
+			discoveredGames = append(discoveredGames, ports.AccountGame{
+				AppID:     appID,
+				Service:   a.ID(),
+				Name:      cached.Title,
+				Platforms: cached.Platforms,
+			})
+			continue
+		}
+		// Check SQLite game_meta_cache
+		if a.db != nil {
+			if name, platStr, err := a.db.GetGameMeta(fmt.Sprintf("epic_%d", appID)); err == nil && name != "" {
+				var plats []string
+				if platStr != "" {
+					for _, p := range strings.Split(platStr, ",") {
+						if trimmed := strings.TrimSpace(p); trimmed != "" {
+							plats = append(plats, trimmed)
+						}
+					}
+				}
+				if len(plats) == 0 {
+					plats = []string{"Windows"}
+				}
+				discoveredGames = append(discoveredGames, ports.AccountGame{
+					AppID:     appID,
+					Service:   a.ID(),
+					Name:      name,
+					Platforms: plats,
+				})
+				continue
+			}
+		}
+
+		uncachedItems = append(uncachedItems, pendingItem{
 			appName:       item.AppName,
 			catalogItemID: item.CatalogItemID,
 			namespace:     item.Namespace,
 			buildVersion:  item.BuildVersion,
 		})
 	}
+	a.gamesMu.RUnlock()
 
-	// 3. Resolve human-readable titles from Epic Catalog bulk API
-	var discoveredGames []ports.AccountGame
-	a.gamesMu.Lock()
-	defer a.gamesMu.Unlock()
+	// 3. Resolve uncached titles from Epic Catalog bulk API concurrently
+	if len(uncachedItems) > 0 {
+		itemsByNamespace := make(map[string][]pendingItem)
+		for _, it := range uncachedItems {
+			itemsByNamespace[it.namespace] = append(itemsByNamespace[it.namespace], it)
+		}
 
-	for ns, items := range itemsByNamespace {
-		// Batch catalog items in chunks of 50
-		for i := 0; i < len(items); i += 50 {
-			end := i + 50
-			if end > len(items) {
-				end = len(items)
-			}
-			chunk := items[i:end]
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8) // up to 8 concurrent catalog requests
+		var mu sync.Mutex
+		newInfos := make([]*EpicGameInfo, 0, len(uncachedItems))
 
-			values := url.Values{}
-			for _, it := range chunk {
-				values.Add("id", it.catalogItemID)
-			}
-			values.Set("includeMainGameDetails", "true")
-			values.Set("country", "GB")
-			values.Set("locale", "en")
-
-			catalogURL := fmt.Sprintf("https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/%s/bulk/items?%s",
-				url.PathEscape(ns), values.Encode())
-
-			cReq, cErr := http.NewRequest("GET", catalogURL, nil)
-			if cErr != nil {
-				continue
-			}
-			cReq.Header.Set("Authorization", "Bearer "+token)
-			cReq.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
-
-			cResp, cErr := a.httpClient.Do(cReq)
-			if cErr != nil || cResp.StatusCode != http.StatusOK {
-				if cResp != nil {
-					_ = cResp.Body.Close()
+		for ns, items := range itemsByNamespace {
+			for i := 0; i < len(items); i += 50 {
+				end := i + 50
+				if end > len(items) {
+					end = len(items)
 				}
-				continue
-			}
+				chunk := items[i:end]
+				namespace := ns
 
-			cBytes, _ := io.ReadAll(cResp.Body)
-			_ = cResp.Body.Close()
+				wg.Add(1)
+				go func(nsName string, chunkItems []pendingItem) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
 
-			var catalogMap map[string]catalogItemDetails
-			if err := json.Unmarshal(cBytes, &catalogMap); err != nil {
-				continue
-			}
+					values := url.Values{}
+					for _, it := range chunkItems {
+						values.Add("id", it.catalogItemID)
+					}
+					values.Set("includeMainGameDetails", "true")
+					values.Set("country", "GB")
+					values.Set("locale", "en")
 
-			for _, it := range chunk {
-				details, found := catalogMap[it.catalogItemID]
-				title := it.appName
-				platforms := []string{"Windows"}
+					catalogURL := fmt.Sprintf("https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/%s/bulk/items?%s",
+						url.PathEscape(nsName), values.Encode())
 
-				if found && details.Title != "" {
-					title = details.Title
-					var plats []string
-					for _, r := range details.ReleaseInfo {
-						for _, p := range r.Platform {
-							if strings.Contains(strings.ToLower(p), "win") && !containsString(plats, "Windows") {
-								plats = append(plats, "Windows")
-							} else if strings.Contains(strings.ToLower(p), "mac") && !containsString(plats, "Mac") {
-								plats = append(plats, "Mac")
-							}
+					ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+					defer cancel()
+
+					var catalogMap map[string]catalogItemDetails
+
+					cReq, cErr := http.NewRequestWithContext(ctx, "GET", catalogURL, nil)
+					if cErr == nil {
+						cReq.Header.Set("Authorization", "Bearer "+token)
+						cReq.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
+
+						cResp, doErr := a.httpClient.Do(cReq)
+						if doErr == nil && cResp.StatusCode == http.StatusOK {
+							cBytes, _ := io.ReadAll(cResp.Body)
+							_ = cResp.Body.Close()
+							_ = json.Unmarshal(cBytes, &catalogMap)
+						} else if cResp != nil {
+							_ = cResp.Body.Close()
 						}
 					}
-					if len(plats) > 0 {
-						platforms = plats
+
+					for _, it := range chunkItems {
+						title := it.appName
+						platforms := []string{"Windows"}
+
+						if catalogMap != nil {
+							if details, found := catalogMap[it.catalogItemID]; found && details.Title != "" {
+								title = details.Title
+								var plats []string
+								for _, r := range details.ReleaseInfo {
+									for _, p := range r.Platform {
+										if strings.Contains(strings.ToLower(p), "win") && !containsString(plats, "Windows") {
+											plats = append(plats, "Windows")
+										} else if strings.Contains(strings.ToLower(p), "mac") && !containsString(plats, "Mac") {
+											plats = append(plats, "Mac")
+										}
+									}
+								}
+								if len(plats) > 0 {
+									platforms = plats
+								}
+							}
+						}
+
+						appID := HashAppName(it.appName)
+						info := &EpicGameInfo{
+							AppID:         appID,
+							AppName:       it.appName,
+							CatalogItemID: it.catalogItemID,
+							Namespace:     it.namespace,
+							Title:         title,
+							BuildVersion:  it.buildVersion,
+							Platforms:     platforms,
+						}
+
+						mu.Lock()
+						newInfos = append(newInfos, info)
+						mu.Unlock()
 					}
-				}
-
-				appID := HashAppName(it.appName)
-				gameInfo := &EpicGameInfo{
-					AppID:         appID,
-					AppName:       it.appName,
-					CatalogItemID: it.catalogItemID,
-					Namespace:     it.namespace,
-					Title:         title,
-					BuildVersion:  it.buildVersion,
-					Platforms:     platforms,
-				}
-
-				a.gamesCache[appID] = gameInfo
-				a.gamesByName[strings.ToLower(it.appName)] = gameInfo
-
-				// Cache in SQLite game_meta_cache
-				if a.db != nil {
-					_ = a.db.UpsertGameMeta(
-						fmt.Sprintf("epic_%d", appID),
-						a.ID(),
-						appID,
-						title,
-						strings.Join(platforms, ", "),
-					)
-				}
-
-				discoveredGames = append(discoveredGames, ports.AccountGame{
-					AppID:     appID,
-					Service:   a.ID(),
-					Name:      title,
-					Platforms: platforms,
-				})
+				}(namespace, chunk)
 			}
 		}
+		wg.Wait()
+
+		// Batch update caches and SQLite under write lock
+		a.gamesMu.Lock()
+		for _, info := range newInfos {
+			a.gamesCache[info.AppID] = info
+			a.gamesByName[strings.ToLower(info.AppName)] = info
+
+			if a.db != nil {
+				_ = a.db.UpsertGameMeta(
+					fmt.Sprintf("epic_%d", info.AppID),
+					a.ID(),
+					info.AppID,
+					info.Title,
+					strings.Join(info.Platforms, ", "),
+				)
+			}
+
+			discoveredGames = append(discoveredGames, ports.AccountGame{
+				AppID:     info.AppID,
+				Service:   a.ID(),
+				Name:      info.Title,
+				Platforms: info.Platforms,
+			})
+		}
+		a.gamesMu.Unlock()
 	}
+
+	// Sort games alphabetically by name
+	sort.Slice(discoveredGames, func(i, j int) bool {
+		return strings.ToLower(discoveredGames[i].Name) < strings.ToLower(discoveredGames[j].Name)
+	})
 
 	log.Printf("[Epic Games] Retrieved %d owned games from genuine library", len(discoveredGames))
 
