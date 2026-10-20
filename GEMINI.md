@@ -83,7 +83,7 @@ This file provides critical architectural context, developer guidelines, convent
   - *1 Authenticated Account (e.g. Steam)*: Shows a dedicated connected store header with store logo and username.
   - *Multiple Accounts*: Displays clickable store tabs with real-time loading states.
 - **Game Dropdown List**:
-  - Displays a clean native dropdown `<select>` element populated with live owned games from the connected account (`game.name (ID: game.app_id)`).
+  - Displays a clean native dropdown `<select>` element populated with live owned games from the connected account (`game.name`).
   - Handles loading states, empty account libraries, and API fetch error messages.
 - **Platform Selection**:
   - Single-platform titles automatically lock and select the platform, enabling the "Add" button immediately.

@@ -115,7 +115,7 @@
               :key="game.app_id" 
               :value="game.app_id"
             >
-              {{ game.name }} (ID: {{ game.app_id }}){{ getExistingGameInfo(game.app_id) ? ` • In Library (${getExistingGameInfo(game.app_id).platform})` : '' }}
+              {{ game.name }}{{ getExistingGameInfo(game.app_id) ? ` • In Library (${getExistingGameInfo(game.app_id).platform})` : '' }}
             </option>
           </select>
         </div>
