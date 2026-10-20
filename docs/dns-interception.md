@@ -1,6 +1,6 @@
 # DNS Interception & Upstream Forwarding
 
-Game clients (such as the Steam client or Epic Games Launcher) resolve CDN hostnames via standard system DNS queries. Artesian serves as your network's primary or secondary DNS resolver to enable seamless, transparent caching without configuring client-side HTTP proxies.
+Steam game clients resolve CDN hostnames via standard system DNS queries. Artesian serves as your network's primary or secondary DNS resolver to enable seamless, transparent caching without configuring client-side HTTP proxies.
 
 ---
 

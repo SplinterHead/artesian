@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -19,11 +18,11 @@ import (
 	"artesian/internal/db"
 	"artesian/internal/dns"
 	"artesian/internal/manifest"
+	"artesian/internal/ports"
 	"artesian/internal/prefill"
 	"artesian/internal/proxy"
 	"artesian/internal/scheduler"
 	"artesian/internal/services"
-	"artesian/internal/steam"
 	"artesian/internal/ws"
 	"artesian/web"
 )
@@ -39,8 +38,17 @@ type Server struct {
 	registry  *services.Registry
 	prefill   *prefill.Manager
 	scheduler *scheduler.Scheduler
-	steam     *steam.Client
 	proxy     *proxy.Server
+}
+
+func (s *Server) getAdapter(service string) (ports.PlatformAdapter, bool) {
+	if s.registry == nil {
+		return nil, false
+	}
+	if service == "" {
+		service = "steam"
+	}
+	return s.registry.Get(service)
 }
 
 // NewServer initializes the API server
@@ -64,7 +72,6 @@ func NewServer(
 		registry:  reg,
 		prefill:   pf,
 		scheduler: sched,
-		steam:     steam.GetClient(database),
 		proxy:     p,
 	}
 }
@@ -86,20 +93,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/stats", s.handleStats)
 	mux.HandleFunc("/api/v1/traffic", s.handleTraffic)
 
-	// Game Services Hub Endpoints (Steam, Epic, Blizzard, Riot, Xbox)
+	// Game Services Hub Endpoints (Steam only)
 	mux.HandleFunc("/api/v1/services", s.handleServices)
 	mux.HandleFunc("/api/v1/services/toggle", s.handleServiceToggle)
 	mux.HandleFunc("/api/v1/services/auto-update", s.handleServiceAutoUpdateToggle)
-	mux.HandleFunc("/api/v1/services/connect", s.handleServiceConnect)
-	mux.HandleFunc("/api/v1/services/disconnect", s.handleServiceDisconnect)
 	mux.HandleFunc("/api/v1/services/available-games", s.handleAvailableGames)
 	mux.HandleFunc("/api/v1/games/platforms", s.handleGamePlatforms)
 
-	// Phase 3: Steam Connection & Authentication Endpoints
-	mux.HandleFunc("/api/v1/steam/status", s.handleSteamStatus)
-	mux.HandleFunc("/api/v1/steam/login", s.handleSteamLogin)
-	mux.HandleFunc("/api/v1/steam/2fa", s.handleSteam2FA)
-	mux.HandleFunc("/api/v1/steam/logout", s.handleSteamLogout)
+	// Generic & Platform Authentication Endpoints
+	mux.HandleFunc("/api/v1/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/v1/auth/2fa", s.handleAuth2FA)
+	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
 
 	// Phase 4: Library & Prefill Engine Endpoints
 	mux.HandleFunc("/api/v1/library", s.handleLibrary)
@@ -109,8 +114,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Phase 5: Automation & Update Check Endpoints
 	mux.HandleFunc("/api/v1/scheduler/rules", s.handleSchedulerRules)
-	mux.HandleFunc("/api/v1/scheduler/check", s.handlePICSPoll)
-	mux.HandleFunc("/api/v1/scheduler/pics/poll", s.handlePICSPoll)
+	mux.HandleFunc("/api/v1/scheduler/check", s.handleUpdateCheck)
 	mux.HandleFunc("/api/v1/updates/log", s.handleUpdateLogs)
 
 	// Embedded Vue/Vuetify SPA & Static Assets
@@ -339,54 +343,25 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 		var chunkID string
 		var lookupURL string
 
-		if svcName == "steam" {
-			if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				depotID, _ = strconv.ParseInt(matches[1], 10, 64)
-			}
-			if depotID > 0 {
-				chunkID = fmt.Sprintf("%d", depotID)
-				lookupURL = fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
-			}
-		} else if svcName == "epic" {
-			if matches := proxy.EpicChunkRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				chunkID = matches[1]
-			}
-			var appName string
-			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				appName = matches[1]
-			}
-			if appName != "" {
-				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(appName))
-			} else if chunkID != "" {
-				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(chunkID))
-			} else {
-				lookupURL = "https://egdata.app"
-			}
+		if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+			depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+		}
+		if depotID > 0 && svc != nil {
+			chunkID = fmt.Sprintf("%d", depotID)
+			lookupURL = svc.DepotLookupURL(depotID)
 		}
 
 		var gameTitle string
 		var platform string
 		var totalSize int64 = l.BytesTransferred
 
-		if svcName == "steam" {
-			info := proxy.ResolveSteamDepot(s.db, depotID, "")
+		if svc != nil {
+			info := svc.ResolveDepot(depotID, "")
 			gameTitle = info.GameTitle
 			platform = info.Platform
 			if info.TotalSize > 0 {
 				totalSize = info.TotalSize
 			}
-		} else if svcName == "epic" {
-			var appName string
-			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				appName = matches[1]
-			}
-			gameTitle, platform = proxy.ResolveEpicGame(s.db, appName, "")
-		} else if svcName == "xbox" {
-			gameTitle = "Xbox Game Package"
-			platform = "Xbox / PC"
-		} else {
-			gameTitle = proxy.ResolveGameTitle(s.db, svcName, depotID, l.Path)
-			platform = proxy.FormatPlatform("", "", "")
 		}
 
 		ts := l.CreatedAt.Format("15:04:05")
@@ -438,35 +413,15 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 		if svc == nil {
 			continue
 		}
-		svcName := svc.Name()
 
 		var depotID int64
-		var chunkID string
 		var lookupURL string
 
-		if svcName == "steam" {
-			if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				depotID, _ = strconv.ParseInt(matches[1], 10, 64)
-			}
-			if depotID > 0 {
-				chunkID = fmt.Sprintf("%d", depotID)
-				lookupURL = fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
-			}
-		} else if svcName == "epic" {
-			if matches := proxy.EpicChunkRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				chunkID = matches[1]
-			}
-			var appName string
-			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				appName = matches[1]
-			}
-			if appName != "" {
-				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(appName))
-			} else if chunkID != "" {
-				lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(chunkID))
-			} else {
-				lookupURL = "https://egdata.app"
-			}
+		if matches := proxy.DepotRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
+			depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+		}
+		if depotID > 0 && svc != nil {
+			lookupURL = svc.DepotLookupURL(depotID)
 		}
 
 		clientIP := l.ClientIP
@@ -480,32 +435,19 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 		var platform string
 		var baseAppID int64
 
-		if svcName == "steam" {
-			info := proxy.ResolveSteamDepot(s.db, depotID, "")
+		if svc != nil {
+			info := svc.ResolveDepot(depotID, "")
 			gameTitle = info.GameTitle
 			platform = info.Platform
 			baseAppID = info.AppID
-		} else if svcName == "epic" {
-			var appName string
-			if matches := proxy.EpicBuildRegex.FindStringSubmatch(l.Path); len(matches) > 1 {
-				appName = matches[1]
-			}
-			gameTitle, platform = proxy.ResolveEpicGame(s.db, appName, "")
-		} else if svcName == "xbox" {
-			gameTitle = "Xbox Game Package"
-			platform = "Xbox / PC"
-		} else {
-			gameTitle = proxy.ResolveGameTitle(s.db, svcName, depotID, l.Path)
-			platform = proxy.FormatPlatform("", "", "")
 		}
 
+		svcID := svc.ID()
 		var sessionKey string
-		if svcName == "steam" && baseAppID > 0 {
-			sessionKey = fmt.Sprintf("%s:steam:%d", clientIP, baseAppID)
-		} else if svcName == "epic" {
-			sessionKey = fmt.Sprintf("%s:epic:%s", clientIP, strings.ToLower(gameTitle))
+		if baseAppID > 0 {
+			sessionKey = fmt.Sprintf("%s:%s:%d", clientIP, svcID, baseAppID)
 		} else {
-			sessionKey = fmt.Sprintf("%s:%s:%s", clientIP, svcName, strings.ToLower(gameTitle))
+			sessionKey = fmt.Sprintf("%s:%s:%s", clientIP, svcID, strings.ToLower(gameTitle))
 		}
 
 		session, exists := sessionsMap[sessionKey]
@@ -513,8 +455,8 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 			session = &proxy.GameDownloadSession{
 				Key:              sessionKey,
 				ClientIP:         clientIP,
-				Store:            proxy.FormatStoreName(svcName),
-				Service:          svcName,
+				Store:            svc.DisplayName(),
+				Service:          svcID,
 				GameTitle:        gameTitle,
 				AppID:            baseAppID,
 				Platform:         platform,
@@ -561,11 +503,6 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 					LookupURL: lookupURL,
 				})
 			}
-		} else if svcName == "epic" && lookupURL != "" && len(session.DepotLinks) == 0 {
-			session.DepotLinks = append(session.DepotLinks, proxy.DepotLinkInfo{
-				ChunkID:   chunkID,
-				LookupURL: lookupURL,
-			})
 		}
 
 		session.BytesTransferred += l.BytesTransferred
@@ -578,9 +515,11 @@ func (s *Server) bundleLogsIntoSessions(logs []db.RequestLog) []*proxy.GameDownl
 
 		var combinedDepotSize int64
 		for _, d := range session.Depots {
-			info := proxy.ResolveSteamDepot(s.db, d, "")
-			if info.TotalSize > 0 {
-				combinedDepotSize += info.TotalSize
+			if svc != nil {
+				info := svc.ResolveDepot(d, "")
+				if info.TotalSize > 0 {
+					combinedDepotSize += info.TotalSize
+				}
 			}
 		}
 		if combinedDepotSize > session.BytesTransferred {
@@ -623,158 +562,47 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	steamStatus := s.steam.Status()
-	var connectedCreds map[string]string
-	if s.db != nil {
-		connectedCreds, _ = s.db.GetConnectedCredentials()
-	}
+	var servicesList []ServiceItem
+	if s.registry != nil {
+		for _, adapter := range s.registry.All() {
+			status := adapter.Status()
+			autoUpdate := true
+			if s.db != nil {
+				autoUpdate = s.db.GetServiceAutoUpdate(adapter.ID())
+			}
+			icon := "🎮"
+			switch adapter.ID() {
+			case "steam":
+				icon = "🎮"
+			case "epic":
+				icon = "⚡"
+			case "battlenet":
+				icon = "⚔️"
+			case "riot":
+				icon = "💥"
+			case "xbox":
+				icon = "🟩"
+			}
 
-	servicesList := []ServiceItem{
-		{
-			ID:               "steam",
-			DisplayName:      "Steam",
-			Company:          "Valve",
-			Icon:             "🎮",
-			Status:           string(steamStatus.State),
-			InterceptEnabled: s.registry.IsEnabled("steam"),
-			AuthSupported:    true,
-			PrefillSupported: true,
-			Username:         steamStatus.Username,
-			Domains: []string{
-				"*.cs.steampowered.com",
-				"*.content.steampowered.com",
-				"*.hsar.steampowered.com",
-				"content*.steampowered.com",
-				"*.steamcontent.com",
-			},
-			Description: "Depot manifest decryption, PICS change polling, and high-throughput chunk caching.",
-		},
-		{
-			ID:               "epic",
-			DisplayName:      "Epic Games Store",
-			Company:          "Epic Games",
-			Icon:             "⚡",
-			Status:           "ready",
-			InterceptEnabled: s.registry.IsEnabled("epic"),
-			AuthSupported:    true,
-			PrefillSupported: false,
-			Domains: []string{
-				"*.download.epicgames.com",
-				"*.ol.epicgames.com",
-			},
-			Description: "Chunked binary manifest (.manifest) and hash-addressed .chunk pass-through caching.",
-		},
-		{
-			ID:               "blizzard",
-			DisplayName:      "Battle.net",
-			Company:          "Blizzard Entertainment",
-			Icon:             "❄️",
-			Status:           "ready",
-			InterceptEnabled: s.registry.IsEnabled("blizzard"),
-			AuthSupported:    true,
-			PrefillSupported: false,
-			Domains: []string{
-				"*.dist.blizzard.com",
-				"*.cdn.blizzard.com",
-				"level3.blizzard.com",
-			},
-			Description: "Battle.net TACT archive format and CDN edge server interception.",
-		},
-		{
-			ID:               "riot",
-			DisplayName:      "Riot Games",
-			Company:          "Riot Games",
-			Icon:             "⚔️",
-			Status:           "ready",
-			InterceptEnabled: s.registry.IsEnabled("riot"),
-			AuthSupported:    true,
-			PrefillSupported: false,
-			Domains: []string{
-				"*.dyn.riotcdn.net",
-				"*.content.riotgames.com",
-			},
-			Description: "Valorant & League of Legends RMAN release manifests and client asset caching.",
-		},
-		{
-			ID:               "xbox",
-			DisplayName:      "Xbox / Windows Store",
-			Company:          "Microsoft",
-			Icon:             "🟢",
-			Status:           "ready",
-			InterceptEnabled: s.registry.IsEnabled("xbox"),
-			AuthSupported:    true,
-			PrefillSupported: false,
-			Domains: []string{
-				"*.assets1.xboxlive.com",
-				"*.delivery.mp.microsoft.com",
-			},
-			Description: "Delivery Optimization range-request caching for Xbox game downloads.",
-		},
-	}
-
-	for i := range servicesList {
-		svc := &servicesList[i]
-		if s.db != nil {
-			svc.AutoUpdate = s.db.GetServiceAutoUpdate(svc.ID)
-		} else {
-			svc.AutoUpdate = true
-		}
-		if user, ok := connectedCreds[svc.ID]; ok && user != "" {
-			svc.Status = "connected"
-			svc.Username = user
+			servicesList = append(servicesList, ServiceItem{
+				ID:               adapter.ID(),
+				DisplayName:      adapter.DisplayName(),
+				Company:          adapter.Company(),
+				Icon:             icon,
+				Status:           string(status.State),
+				InterceptEnabled: s.registry.IsEnabled(adapter.ID()),
+				AutoUpdate:       autoUpdate,
+				AuthSupported:    true,
+				PrefillSupported: true,
+				Username:         status.Username,
+				Domains:          adapter.Domains(),
+				Description:      adapter.Description(),
+			})
 		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"services": servicesList,
-	})
-}
-
-func (s *Server) handleServiceConnect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Service  string `json:"service"`
-		Username string `json:"username"`
-		Token    string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" || req.Username == "" {
-		http.Error(w, "Service and username are required", http.StatusBadRequest)
-		return
-	}
-	if s.db != nil {
-		_ = s.db.SetServiceCredential(req.Service, req.Username, req.Token)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":  "Credentials connected successfully",
-		"service":  req.Service,
-		"username": req.Username,
-	})
-}
-
-func (s *Server) handleServiceDisconnect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Service string `json:"service"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
-		http.Error(w, "Service is required", http.StatusBadRequest)
-		return
-	}
-	if req.Service == "steam" {
-		_ = s.steam.Logout()
-	}
-	if s.db != nil {
-		_ = s.db.RemoveServiceCredential(req.Service)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Service disconnected",
-		"service": req.Service,
 	})
 }
 
@@ -791,25 +619,19 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc := strings.ToLower(r.URL.Query().Get("service"))
-	if svc == "" {
-		svc = "steam"
+	service := r.URL.Query().Get("service")
+	if service == "" {
+		service = "steam"
 	}
 
-	// Verify authentication for this service
-	isConnected := false
-	if svc == "steam" {
-		isConnected = s.steam.Status().HasValidAuth
-	}
-	if !isConnected && s.db != nil {
-		creds, _ := s.db.GetConnectedCredentials()
-		if _, ok := creds[svc]; ok {
-			isConnected = true
-		}
+	adapter, ok := s.getAdapter(service)
+	if !ok {
+		http.Error(w, fmt.Sprintf("Service '%s' not registered", service), http.StatusNotFound)
+		return
 	}
 
-	if !isConnected {
-		http.Error(w, fmt.Sprintf("Service %s is not authenticated", svc), http.StatusUnauthorized)
+	if !adapter.Status().HasValidAuth {
+		http.Error(w, fmt.Sprintf("%s service is not authenticated", adapter.DisplayName()), http.StatusUnauthorized)
 		return
 	}
 
@@ -817,25 +639,20 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 	var privacyRestricted bool
 	var privacyHint string
 
-	switch svc {
-	case "steam":
-		res, err := s.steam.FetchAccountGames()
-		if err != nil {
-			log.Printf("[API] Failed to fetch Steam account games: %v", err)
-		} else if res != nil {
-			for _, g := range res.Games {
-				games = append(games, AvailableGame{
-					AppID:     g.AppID,
-					Service:   "steam",
-					Name:      g.Name,
-					Platforms: g.Platforms,
-				})
-			}
-			privacyRestricted = res.PrivacyRestricted
-			privacyHint = res.Hint
+	res, err := adapter.GetOwnedGames()
+	if err != nil {
+		log.Printf("[API] Failed to fetch %s account games: %v", adapter.DisplayName(), err)
+	} else if res != nil {
+		for _, g := range res.Games {
+			games = append(games, AvailableGame{
+				AppID:     g.AppID,
+				Service:   service,
+				Name:      g.Name,
+				Platforms: g.Platforms,
+			})
 		}
-	default:
-		games = s.getKnownGamesForService(svc)
+		privacyRestricted = res.PrivacyRestricted
+		privacyHint = res.Hint
 	}
 
 	if games == nil {
@@ -843,7 +660,7 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"service":            svc,
+		"service":            service,
 		"games":              games,
 		"privacy_restricted": privacyRestricted,
 		"hint":               privacyHint,
@@ -855,99 +672,29 @@ func (s *Server) handleGamePlatforms(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	svc := r.URL.Query().Get("service")
 	appIDStr := r.URL.Query().Get("app_id")
 	appID, _ := strconv.ParseInt(appIDStr, 10, 64)
 	if appID <= 0 {
 		http.Error(w, "Invalid app_id", http.StatusBadRequest)
 		return
 	}
+	service := r.URL.Query().Get("service")
+	if service == "" {
+		service = "steam"
+	}
 
 	var name string
 	var platforms []string
-	if svc == "steam" || svc == "" {
-		name, platforms = s.steam.ResolveAppPlatforms(appID, "")
-	} else {
-		platforms = []string{"Windows"}
+	if adapter, ok := s.getAdapter(service); ok {
+		name, platforms = adapter.ResolveAppPlatforms(appID, "")
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"app_id":    appID,
-		"service":   svc,
+		"service":   service,
 		"name":      name,
 		"platforms": platforms,
 	})
-}
-
-func (s *Server) getKnownGamesForService(service string) []AvailableGame {
-	if s.db == nil {
-		return []AvailableGame{}
-	}
-	var games []AvailableGame
-	seen := make(map[int64]bool)
-
-	// Check watched_apps
-	apps, err := s.db.GetWatchedApps()
-	if err == nil {
-		for _, a := range apps {
-			if strings.EqualFold(a.Service, service) && !seen[a.AppID] {
-				seen[a.AppID] = true
-				var platforms []string
-				if a.Platform != "" {
-					parts := strings.Split(a.Platform, ",")
-					for _, p := range parts {
-						if t := strings.TrimSpace(p); t != "" {
-							platforms = append(platforms, t)
-						}
-					}
-				}
-				if len(platforms) == 0 {
-					platforms = []string{"Windows"}
-				}
-				games = append(games, AvailableGame{
-					AppID:     a.AppID,
-					Service:   service,
-					Name:      a.Name,
-					Platforms: platforms,
-				})
-			}
-		}
-	}
-
-	// Check game_meta_cache
-	if rows, err := s.db.Query("SELECT DISTINCT app_id, name, platform FROM game_meta_cache WHERE service = ? AND app_id > 0", service); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var appID int64
-			var name, platform string
-			if err := rows.Scan(&appID, &name, &platform); err == nil && !seen[appID] {
-				seen[appID] = true
-				var platforms []string
-				if platform != "" {
-					parts := strings.Split(platform, ",")
-					for _, p := range parts {
-						if t := strings.TrimSpace(p); t != "" {
-							platforms = append(platforms, t)
-						}
-					}
-				}
-				if len(platforms) == 0 {
-					platforms = []string{"Windows"}
-				}
-				games = append(games, AvailableGame{
-					AppID:     appID,
-					Service:   service,
-					Name:      name,
-					Platforms: platforms,
-				})
-			}
-		}
-	}
-
-	sort.Slice(games, func(i, j int) bool {
-		return strings.ToLower(games[i].Name) < strings.ToLower(games[j].Name)
-	})
-	return games
 }
 
 func (s *Server) handleServiceToggle(w http.ResponseWriter, r *http.Request) {
@@ -996,71 +743,115 @@ func (s *Server) handleServiceAutoUpdateToggle(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Phase 3: Steam Authentication Handlers
-func (s *Server) handleSteamStatus(w http.ResponseWriter, r *http.Request) {
-	status := s.steam.Status()
-	writeJSON(w, http.StatusOK, status)
+// Generic Platform Authentication Handlers
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	if service == "" {
+		service = "steam"
+	}
+	adapter, ok := s.getAdapter(service)
+	if !ok {
+		http.Error(w, fmt.Sprintf("Service '%s' not registered", service), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, adapter.Status())
 }
 
-func (s *Server) handleSteamLogin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req struct {
+		Service  string `json:"service"`
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid credentials", http.StatusBadRequest)
+		http.Error(w, "Invalid credentials payload", http.StatusBadRequest)
+		return
+	}
+	if req.Service == "" {
+		req.Service = "steam"
+	}
+
+	adapter, ok := s.getAdapter(req.Service)
+	if !ok {
+		http.Error(w, fmt.Sprintf("Service '%s' not registered", req.Service), http.StatusNotFound)
 		return
 	}
 
-	if err := s.steam.Login(req.Username, req.Password); err != nil {
+	if err := adapter.Login(req.Username, req.Password); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Connecting to Steam Connection Manager...",
-		"status":  s.steam.Status(),
+		"message": fmt.Sprintf("Connecting to %s authentication service...", adapter.DisplayName()),
+		"status":  adapter.Status(),
 	})
 }
 
-func (s *Server) handleSteam2FA(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAuth2FA(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req struct {
-		Code string `json:"code"`
+		Service string `json:"service"`
+		Code    string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid code payload", http.StatusBadRequest)
 		return
 	}
+	if req.Service == "" {
+		req.Service = "steam"
+	}
 
-	if err := s.steam.Submit2FA(req.Code); err != nil {
+	adapter, ok := s.getAdapter(req.Service)
+	if !ok {
+		http.Error(w, fmt.Sprintf("Service '%s' not registered", req.Service), http.StatusNotFound)
+		return
+	}
+
+	if err := adapter.Submit2FA(req.Code); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Steam Guard authentication successful",
-		"status":  s.steam.Status(),
+		"message": fmt.Sprintf("%s 2FA verification successful", adapter.DisplayName()),
+		"status":  adapter.Status(),
 	})
 }
 
-func (s *Server) handleSteamLogout(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_ = s.steam.Logout()
+
+	var req struct {
+		Service string `json:"service"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Service == "" {
+		req.Service = "steam"
+	}
+
+	adapter, ok := s.getAdapter(req.Service)
+	if !ok {
+		http.Error(w, fmt.Sprintf("Service '%s' not registered", req.Service), http.StatusNotFound)
+		return
+	}
+
+	_ = adapter.Logout()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Steam session cleared",
+		"message": fmt.Sprintf("%s session cleared", adapter.DisplayName()),
+		"status":  adapter.Status(),
 	})
 }
 
@@ -1136,11 +927,13 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 			ws.GetHub().Broadcast("update:discovered", logEntry)
 		}
 
-		// Prefetch depot metadata in background if Steam
-		if s.db != nil && req.Service == "steam" {
-			go func(appID int64) {
-				_ = proxy.FetchRemoteSteamAppInfo(s.db, appID)
-			}(req.AppID)
+		// Prefetch depot metadata in background if registered platform adapter
+		if s.registry != nil {
+			if adapter, ok := s.registry.Get(req.Service); ok {
+				go func(a ports.PlatformAdapter, appID int64) {
+					_ = a.FetchAppInfo(appID)
+				}(adapter, req.AppID)
+			}
 		}
 
 		// Automatically start caching the depot
@@ -1354,14 +1147,14 @@ func (s *Server) handleSchedulerRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handlePICSPoll(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	go s.scheduler.CheckSteamUpdates()
+	go s.scheduler.CheckUpdates()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Steam update check dispatched",
+		"message": "Update check dispatched",
 	})
 }
 

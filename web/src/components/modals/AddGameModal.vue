@@ -15,7 +15,7 @@
           Please set up credentials with a Store so your available games can be seen
         </p>
         <p class="text-xs text-muted mt-2">
-          Head over to the Accounts &amp; Modules tab to authenticate your Steam, Epic Games, Battle.net, Riot, or Xbox account.
+          Head over to the Accounts &amp; Modules tab to authenticate your Steam account.
         </p>
       </div>
     </div>
@@ -24,60 +24,27 @@
     <div v-else class="add-game-form">
       <!-- Store Selection Top Area -->
       <div class="store-selection-section mb-4">
-        <!-- Scenario B: Only 1 Service Authenticated (e.g. Steam) -->
-        <div v-if="authenticatedServices.length === 1" class="single-store-header">
+        <div class="single-store-header">
           <div class="store-badge-single selected">
-            <div class="store-logo-wrapper" :class="'store-bg-' + authenticatedServices[0].id">
+            <div class="store-logo-wrapper store-bg-steam">
               <svg 
-                v-if="platformLogos[authenticatedServices[0].id]" 
+                v-if="platformLogos.steam" 
                 class="store-svg" 
-                :viewBox="platformLogos[authenticatedServices[0].id].viewBox" 
+                :viewBox="platformLogos.steam.viewBox" 
                 fill="currentColor"
               >
-                <path :d="platformLogos[authenticatedServices[0].id].path" />
+                <path :d="platformLogos.steam.path" />
               </svg>
               <i v-else class="fa-solid fa-gamepad"></i>
             </div>
             <div class="store-info-single">
-              <span class="store-title">{{ authenticatedServices[0].display_name }}</span>
+              <span class="store-title">Steam</span>
               <span class="store-sub">
                 <i class="fa-solid fa-circle-check text-green mr-1"></i> Connected
-                <span v-if="authenticatedServices[0].username" class="store-user">({{ authenticatedServices[0].username }})</span>
+                <span v-if="authenticatedServices[0]?.username" class="store-user">({{ authenticatedServices[0].username }})</span>
               </span>
             </div>
             <span class="badge badge-hit ml-auto">SELECTED</span>
-          </div>
-        </div>
-
-        <!-- Scenario C: Multiple Services Authenticated -->
-        <div v-else class="multi-store-header">
-          <label class="section-label">Select Store</label>
-          <div class="store-tabs-grid">
-            <button
-              v-for="svc in authenticatedServices"
-              :key="svc.id"
-              type="button"
-              class="store-tab-btn"
-              :class="{ 'active': selectedServiceId === svc.id }"
-              :disabled="loadingGames"
-              @click="switchService(svc.id)"
-            >
-              <div class="store-tab-icon" :class="'store-bg-' + svc.id">
-                <svg 
-                  v-if="platformLogos[svc.id]" 
-                  class="store-svg" 
-                  :viewBox="platformLogos[svc.id].viewBox" 
-                  fill="currentColor"
-                >
-                  <path :d="platformLogos[svc.id].path" />
-                </svg>
-                <i v-else class="fa-solid fa-gamepad"></i>
-              </div>
-              <span class="store-tab-name">{{ svc.display_name }}</span>
-              <span v-if="selectedServiceId === svc.id" class="store-active-indicator">
-                <i class="fa-solid fa-circle-check"></i>
-              </span>
-            </button>
           </div>
         </div>
       </div>
@@ -351,32 +318,22 @@ const canAdd = computed(() => {
 });
 
 // Live game fetching
-async function loadGames(serviceId) {
+async function loadGames() {
   loadingGames.value = true;
   fetchError.value = '';
   privacyHint.value = '';
   try {
-    const res = await api.getAvailableGames(serviceId);
+    const res = await api.getAvailableGames('steam');
     availableGames.value = res.games || [];
     privacyHint.value = res.hint || '';
   } catch (err) {
-    console.error('Failed to load available games for', serviceId, err);
+    console.error('Failed to load available Steam games', err);
     fetchError.value = err.message || 'Failed to fetch games list';
     availableGames.value = [];
     privacyHint.value = '';
   } finally {
     loadingGames.value = false;
   }
-}
-
-// Switching Service in Scenario C
-async function switchService(serviceId) {
-  if (selectedServiceId.value === serviceId && availableGames.value.length > 0) return;
-  selectedServiceId.value = serviceId;
-  selectedGameAppId.value = '';
-  selectedPlatforms.value = [];
-  isPlatformDropdownOpen.value = false;
-  await loadGames(serviceId);
 }
 
 // Toggling platforms for multi-platform games
@@ -414,11 +371,8 @@ watch(() => props.modelValue, async (isOpen) => {
     privacyHint.value = '';
 
     if (authenticatedServices.value.length > 0) {
-      // Pick first authenticated service (prefer steam if authenticated)
-      const hasSteam = authenticatedServices.value.some(s => s.id === 'steam');
-      const initialSvc = hasSteam ? 'steam' : authenticatedServices.value[0].id;
-      selectedServiceId.value = initialSvc;
-      await loadGames(initialSvc);
+      selectedServiceId.value = 'steam';
+      await loadGames();
     } else {
       availableGames.value = [];
     }
@@ -647,10 +601,6 @@ function handleSubmit() {
 
 /* Service Colors */
 .store-bg-steam { color: #66c0f4; }
-.store-bg-epic { color: #ffffff; }
-.store-bg-blizzard { color: #00aeff; }
-.store-bg-riot { color: #d13639; }
-.store-bg-xbox { color: #107c10; }
 
 /* Form Controls */
 .label-row {

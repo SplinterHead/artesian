@@ -1,35 +1,16 @@
-package proxy
+package steam
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"artesian/internal/db"
-)
-
-// DepotInfo contains dynamically looked-up game and platform details for a depot
-type DepotInfo struct {
-	GameTitle string
-	AppID     int64
-	Platform  string
-	TotalSize int64
-}
-
-var (
-	depotInfoCacheMu sync.RWMutex
-	depotInfoCache   = make(map[int64]*DepotInfo)
-	depotFetchingMu  sync.Mutex
-	depotFetching    = make(map[int64]bool)
-
-	camelCaseRegex = regexp.MustCompile(`([a-z])([A-Z0-9])`)
-	digitWordRegex = regexp.MustCompile(`([0-9])([A-Za-z])`)
+	"artesian/internal/ports"
 )
 
 // FormatPlatform resolves human-friendly platform labels like "Mac 64bit", "Windows", "Linux 64bit"
@@ -92,32 +73,116 @@ func FormatPlatform(oslist, osarch, userAgent string) string {
 	return "PC"
 }
 
-// FormatEpicTitle formats PascalCase Epic build names (e.g. RocketLeague -> Rocket League)
-func FormatEpicTitle(raw string) string {
-	s := strings.TrimSpace(raw)
-	s = camelCaseRegex.ReplaceAllString(s, "${1} ${2}")
-	s = digitWordRegex.ReplaceAllString(s, "${1} ${2}")
-	return s
+// ResolveBaseAppID finds the base App ID from a depot ID
+func (a *Adapter) ResolveBaseAppID(depotID int64) int64 {
+	if depotID <= 0 {
+		return 0
+	}
+	if depotID%10 == 0 {
+		return depotID
+	}
+	return depotID - (depotID % 10)
 }
 
-// FetchRemoteSteamDepotInfo contacts remote Steam services to look up fresh app title, platform, and sizes
-func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string) (*DepotInfo, error) {
+// ResolveDepot returns fresh game title, platform, and total size for a depot with caching
+func (a *Adapter) ResolveDepot(depotID int64, userAgent string) ports.DepotInfo {
+	if depotID <= 0 {
+		return ports.DepotInfo{GameTitle: "Steam Game Client", Platform: FormatPlatform("", "", userAgent)}
+	}
+
+	// 1. In-memory cache
+	a.depotInfoCacheMu.RLock()
+	cached, found := a.depotInfoCache[depotID]
+	a.depotInfoCacheMu.RUnlock()
+	if found && cached != nil {
+		if cached.Platform == "PC" || cached.Platform == "" {
+			if fresh, err := a.fetchRemoteSteamDepotInfo(depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
+				return *fresh
+			}
+		}
+		a.triggerBackgroundDoubleCheck(depotID, userAgent)
+		return *cached
+	}
+
+	// 2. Database lookup
+	if a.db != nil {
+		if meta, err := a.db.GetDepotMeta(depotID); err == nil && meta != nil && meta.GameTitle != "" {
+			platform := meta.Platform
+			if platform == "PC" || platform == "" {
+				if fresh, err := a.fetchRemoteSteamDepotInfo(depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
+					return *fresh
+				}
+			}
+
+			info := ports.DepotInfo{
+				DepotID:   depotID,
+				GameTitle: meta.GameTitle,
+				AppID:     meta.AppID,
+				Platform:  platform,
+				TotalSize: meta.TotalSize,
+			}
+			a.depotInfoCacheMu.Lock()
+			a.depotInfoCache[depotID] = &info
+			a.depotInfoCacheMu.Unlock()
+
+			// Double check with remote data asynchronously
+			a.triggerBackgroundDoubleCheck(depotID, userAgent)
+			return info
+		}
+	}
+
+	// 3. Fresh remote lookup (synchronous initial fetch with timeout)
+	if fresh, err := a.fetchRemoteSteamDepotInfo(depotID, userAgent); err == nil && fresh != nil {
+		return *fresh
+	}
+
+	// 4. Fallback if offline
+	baseAppID := a.ResolveBaseAppID(depotID)
+	platform := FormatPlatform("", "", userAgent)
+	return ports.DepotInfo{
+		DepotID:   depotID,
+		GameTitle: fmt.Sprintf("Steam App %d", baseAppID),
+		AppID:     baseAppID,
+		Platform:  platform,
+		TotalSize: 0,
+	}
+}
+
+func (a *Adapter) triggerBackgroundDoubleCheck(depotID int64, userAgent string) {
+	a.depotFetchingMu.Lock()
+	if a.depotFetching[depotID] {
+		a.depotFetchingMu.Unlock()
+		return
+	}
+	a.depotFetching[depotID] = true
+	a.depotFetchingMu.Unlock()
+
+	go func() {
+		defer func() {
+			a.depotFetchingMu.Lock()
+			delete(a.depotFetching, depotID)
+			a.depotFetchingMu.Unlock()
+		}()
+
+		_, _ = a.fetchRemoteSteamDepotInfo(depotID, userAgent)
+	}()
+}
+
+// fetchRemoteSteamDepotInfo contacts remote Steam services to look up fresh app title, platform, and sizes
+func (a *Adapter) fetchRemoteSteamDepotInfo(depotID int64, userAgent string) (*ports.DepotInfo, error) {
 	if depotID <= 0 {
 		return nil, fmt.Errorf("invalid depot ID")
 	}
 
-	baseAppID := depotID - (depotID % 10)
-	if depotID%10 == 0 {
-		baseAppID = depotID
-	}
+	baseAppID := a.ResolveBaseAppID(depotID)
 
-	if database != nil {
+	if a.db != nil {
 		var existingAppID int64
-		_ = database.QueryRow("SELECT app_id FROM depot_meta_cache WHERE depot_id = ? AND app_id > 0 LIMIT 1", depotID).Scan(&existingAppID)
+		_ = a.db.QueryRow("SELECT app_id FROM depot_meta_cache WHERE depot_id = ? AND app_id > 0 LIMIT 1", depotID).Scan(&existingAppID)
 		if existingAppID > 0 {
 			baseAppID = existingAppID
 		} else {
-			_ = database.QueryRow("SELECT app_id FROM chunk_cache WHERE depot_id = ? AND app_id > 0 LIMIT 1", depotID).Scan(&existingAppID)
+			_ = a.db.QueryRow("SELECT app_id FROM chunk_cache WHERE depot_id = ? AND app_id > 0 LIMIT 1", depotID).Scan(&existingAppID)
 			if existingAppID > 0 {
 				baseAppID = existingAppID
 			}
@@ -155,7 +220,7 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 				if appData, ok := steamCmdData.Data[appKey]; ok && appData.Common.Name != "" {
 					gameTitle := strings.TrimSpace(appData.Common.Name)
 
-					var matchedInfo *DepotInfo
+					var matchedInfo *ports.DepotInfo
 
 					// Learn and store ALL sibling depots in SQLite
 					for dKey, dRaw := range appData.Depots {
@@ -200,19 +265,20 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 							}
 						}
 
-						info := &DepotInfo{
+						info := &ports.DepotInfo{
+							DepotID:   dID,
 							GameTitle: gameTitle,
 							AppID:     baseAppID,
 							Platform:  platform,
 							TotalSize: totalSize,
 						}
 
-						depotInfoCacheMu.Lock()
-						depotInfoCache[dID] = info
-						depotInfoCacheMu.Unlock()
+						a.depotInfoCacheMu.Lock()
+						a.depotInfoCache[dID] = info
+						a.depotInfoCacheMu.Unlock()
 
-						if database != nil {
-							_ = database.UpsertDepotMeta(db.DepotMeta{
+						if a.db != nil {
+							_ = a.db.UpsertDepotMeta(db.DepotMeta{
 								DepotID:   dID,
 								AppID:     baseAppID,
 								Service:   "steam",
@@ -227,7 +293,7 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 						}
 					}
 
-					// If the depot was not defined directly in this app (e.g. DLC depot defined in parent base game), check parent
+					// If the depot was not defined directly in this app, check parent
 					if matchedInfo == nil {
 						var parentAppID int64
 						if appData.Common.Parent != "" {
@@ -267,7 +333,7 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 														Oslist string `json:"oslist"`
 														Osarch string `json:"osarch"`
 													} `json:"config"`
-													DlcAppID string `json:"dlcappid"`
+													DlcAppID  string `json:"dlcappid"`
 													Manifests map[string]struct {
 														Gid      string `json:"gid"`
 														Download string `json:"download"`
@@ -325,19 +391,21 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 													}
 												}
 
-												info := &DepotInfo{
-													GameTitle: depotTitle,
-													AppID:     depotAppID,
-													Platform:  platform,
-													TotalSize: totalSize,
+												info := &ports.DepotInfo{
+													DepotID:    dID,
+													GameTitle:  depotTitle,
+													AppID:      depotAppID,
+													Platform:   platform,
+													TotalSize:  totalSize,
+													ManifestID: manifestID,
 												}
 
-												depotInfoCacheMu.Lock()
-												depotInfoCache[dID] = info
-												depotInfoCacheMu.Unlock()
+												a.depotInfoCacheMu.Lock()
+												a.depotInfoCache[dID] = info
+												a.depotInfoCacheMu.Unlock()
 
-												if database != nil {
-													_ = database.UpsertDepotMeta(db.DepotMeta{
+												if a.db != nil {
+													_ = a.db.UpsertDepotMeta(db.DepotMeta{
 														DepotID:    dID,
 														AppID:      depotAppID,
 														Service:    "steam",
@@ -363,7 +431,8 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 						return matchedInfo, nil
 					}
 
-					info := &DepotInfo{
+					info := &ports.DepotInfo{
+						DepotID:   depotID,
 						GameTitle: gameTitle,
 						AppID:     baseAppID,
 						Platform:  FormatPlatform("", "", userAgent),
@@ -407,19 +476,20 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 					}
 				}
 
-				info := &DepotInfo{
+				info := &ports.DepotInfo{
+					DepotID:   depotID,
 					GameTitle: name,
 					AppID:     baseAppID,
 					Platform:  platform,
 					TotalSize: 0,
 				}
 
-				depotInfoCacheMu.Lock()
-				depotInfoCache[depotID] = info
-				depotInfoCacheMu.Unlock()
+				a.depotInfoCacheMu.Lock()
+				a.depotInfoCache[depotID] = info
+				a.depotInfoCacheMu.Unlock()
 
-				if database != nil {
-					_ = database.UpsertDepotMeta(db.DepotMeta{
+				if a.db != nil {
+					_ = a.db.UpsertDepotMeta(db.DepotMeta{
 						DepotID:   depotID,
 						AppID:     baseAppID,
 						Service:   "steam",
@@ -436,136 +506,8 @@ func FetchRemoteSteamDepotInfo(database *db.DB, depotID int64, userAgent string)
 	return nil, fmt.Errorf("remote lookup failed")
 }
 
-func triggerBackgroundDoubleCheck(database *db.DB, depotID int64, userAgent string) {
-	depotFetchingMu.Lock()
-	if depotFetching[depotID] {
-		depotFetchingMu.Unlock()
-		return
-	}
-	depotFetching[depotID] = true
-	depotFetchingMu.Unlock()
-
-	go func() {
-		defer func() {
-			depotFetchingMu.Lock()
-			delete(depotFetching, depotID)
-			depotFetchingMu.Unlock()
-		}()
-
-		_, _ = FetchRemoteSteamDepotInfo(database, depotID, userAgent)
-	}()
-}
-
-// ResolveSteamDepot returns fresh game title, platform, and total size for a depot with DB caching
-func ResolveSteamDepot(database *db.DB, depotID int64, userAgent string) DepotInfo {
-	if depotID <= 0 {
-		return DepotInfo{GameTitle: "Steam Game Client", Platform: FormatPlatform("", "", userAgent)}
-	}
-
-	// 1. In-memory cache
-	depotInfoCacheMu.RLock()
-	cached, found := depotInfoCache[depotID]
-	depotInfoCacheMu.RUnlock()
-	if found && cached != nil {
-		if (cached.Platform == "PC" || cached.Platform == "") {
-			if fresh, err := FetchRemoteSteamDepotInfo(database, depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
-				return *fresh
-			}
-		}
-		triggerBackgroundDoubleCheck(database, depotID, userAgent)
-		return *cached
-	}
-
-	// 2. Database lookup
-	if database != nil {
-		if meta, err := database.GetDepotMeta(depotID); err == nil && meta != nil && meta.GameTitle != "" {
-			platform := meta.Platform
-			if platform == "PC" || platform == "" {
-				if fresh, err := FetchRemoteSteamDepotInfo(database, depotID, userAgent); err == nil && fresh != nil && fresh.Platform != "PC" && fresh.Platform != "" {
-					return *fresh
-				}
-			}
-
-			info := DepotInfo{
-				GameTitle: meta.GameTitle,
-				AppID:     meta.AppID,
-				Platform:  platform,
-				TotalSize: meta.TotalSize,
-			}
-			depotInfoCacheMu.Lock()
-			depotInfoCache[depotID] = &info
-			depotInfoCacheMu.Unlock()
-
-			// Double check with remote data asynchronously
-			triggerBackgroundDoubleCheck(database, depotID, userAgent)
-			return info
-		}
-	}
-
-	// 3. Fresh remote lookup (synchronous initial fetch with 3.5s timeout)
-	if fresh, err := FetchRemoteSteamDepotInfo(database, depotID, userAgent); err == nil && fresh != nil {
-		return *fresh
-	}
-
-	// 4. Fallback if offline
-	baseAppID := depotID - (depotID % 10)
-	if depotID%10 == 0 {
-		baseAppID = depotID
-	}
-	platform := FormatPlatform("", "", userAgent)
-	return DepotInfo{
-		GameTitle: fmt.Sprintf("Steam App %d", baseAppID),
-		AppID:     baseAppID,
-		Platform:  platform,
-		TotalSize: 0,
-	}
-}
-
-// ResolveEpicGame dynamically looks up and caches Epic game titles and platforms
-func ResolveEpicGame(database *db.DB, rawAppName, userAgent string) (gameTitle, platform string) {
-	if rawAppName == "" {
-		return "Epic Games Store", FormatPlatform("", "", userAgent)
-	}
-
-	key := "epic:" + strings.ToLower(rawAppName)
-	if database != nil {
-		if name, plat, err := database.GetGameMeta(key); err == nil && name != "" {
-			return name, plat
-		}
-	}
-
-	formatted := FormatEpicTitle(rawAppName)
-	platform = FormatPlatform("", "", userAgent)
-
-	if database != nil {
-		_ = database.UpsertGameMeta(key, "epic", 0, formatted, platform)
-	}
-
-	// Double check with Epic store product API in background
-	go func() {
-		client := &http.Client{Timeout: 4 * time.Second}
-		slug := strings.ToLower(rawAppName)
-		apiURL := fmt.Sprintf("https://store-content-ipv4.ak.epicgames.com/api/en-US/content/products/%s", slug)
-		resp, err := client.Get(apiURL)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			var data struct {
-				Title string `json:"_title"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Title != "" {
-				cleanTitle := strings.TrimSpace(data.Title)
-				if database != nil {
-					_ = database.UpsertGameMeta(key, "epic", 0, cleanTitle, platform)
-				}
-			}
-		}
-	}()
-
-	return formatted, platform
-}
-
-// FetchRemoteSteamAppInfo queries the SteamCMD PICS endpoint to populate depot_meta_cache with all depots and sizes for an App ID
-func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
+// FetchAppInfo queries SteamCMD PICS endpoint to populate depot_meta_cache with all depots and sizes for an App ID
+func (a *Adapter) FetchAppInfo(appID int64) error {
 	if appID <= 0 {
 		return fmt.Errorf("invalid app ID: %d", appID)
 	}
@@ -676,19 +618,21 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 			}
 		}
 
-		info := &DepotInfo{
-			GameTitle: gameTitle,
-			AppID:     appID,
-			Platform:  platform,
-			TotalSize: totalSize,
+		info := &ports.DepotInfo{
+			DepotID:    dID,
+			GameTitle:  gameTitle,
+			AppID:      appID,
+			Platform:   platform,
+			TotalSize:  totalSize,
+			ManifestID: manifestID,
 		}
 
-		depotInfoCacheMu.Lock()
-		depotInfoCache[dID] = info
-		depotInfoCacheMu.Unlock()
+		a.depotInfoCacheMu.Lock()
+		a.depotInfoCache[dID] = info
+		a.depotInfoCacheMu.Unlock()
 
-		if database != nil {
-			_ = database.UpsertDepotMeta(db.DepotMeta{
+		if a.db != nil {
+			_ = a.db.UpsertDepotMeta(db.DepotMeta{
 				DepotID:    dID,
 				AppID:      appID,
 				Service:    "steam",
@@ -702,4 +646,3 @@ func FetchRemoteSteamAppInfo(database *db.DB, appID int64) error {
 
 	return nil
 }
-

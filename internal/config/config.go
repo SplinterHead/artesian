@@ -60,11 +60,7 @@ type DatabaseConfig struct {
 
 // ServicesConfig lists enabled game platforms
 type ServicesConfig struct {
-	Steam     ServiceSettings `json:"steam"`
-	EpicGames ServiceSettings `json:"epicgames"`
-	Blizzard  ServiceSettings `json:"blizzard"`
-	Riot      ServiceSettings `json:"riot"`
-	Xbox      ServiceSettings `json:"xbox"`
+	Steam ServiceSettings `json:"steam"`
 }
 
 // ServiceSettings controls a specific platform's behavior
@@ -121,38 +117,6 @@ func DefaultConfig() *Config {
 					"*.hsar.steampowered.com",
 					"content*.steampowered.com",
 					"*.steamcontent.com",
-				},
-				AutoUpdate: true,
-			},
-			EpicGames: ServiceSettings{
-				Enabled: true,
-				Domains: []string{
-					"*.download.epicgames.com",
-					"*.ol.epicgames.com",
-				},
-				AutoUpdate: true,
-			},
-			Blizzard: ServiceSettings{
-				Enabled: true,
-				Domains: []string{
-					"*.dist.blizzard.com",
-					"*.cdn.blizzard.com",
-				},
-				AutoUpdate: true,
-			},
-			Riot: ServiceSettings{
-				Enabled: true,
-				Domains: []string{
-					"*.dyn.riotcdn.net",
-					"*.content.riotgames.com",
-				},
-				AutoUpdate: true,
-			},
-			Xbox: ServiceSettings{
-				Enabled: true,
-				Domains: []string{
-					"*.assets1.xboxlive.com",
-					"*.delivery.mp.microsoft.com",
 				},
 				AutoUpdate: true,
 			},
@@ -232,10 +196,6 @@ func LoadFromDB(database *db.DB) *Config {
 	}
 
 	cfg.Services.Steam.AutoUpdate = database.GetServiceAutoUpdate("steam")
-	cfg.Services.EpicGames.AutoUpdate = database.GetServiceAutoUpdate("epic")
-	cfg.Services.Blizzard.AutoUpdate = database.GetServiceAutoUpdate("blizzard")
-	cfg.Services.Riot.AutoUpdate = database.GetServiceAutoUpdate("riot")
-	cfg.Services.Xbox.AutoUpdate = database.GetServiceAutoUpdate("xbox")
 
 	return cfg
 }

@@ -11,7 +11,7 @@ Designed to replace complex, fragmented, and multi-container legacy network cach
 ## Key Features
 
 - **Embedded DNS Interceptor & Upstream Forwarder:**
-  Intercepts DNS queries for game distribution CDNs (Steam, Epic Games, Blizzard, Riot, Xbox) and rewrites them to the local proxy IP. Transparently forwards all regular DNS queries to upstream resolvers (Cloudflare, Google, or local gateways) with zero configuration overhead.
+  Intercepts DNS queries for Steam game distribution CDNs and rewrites them to the local proxy IP. Transparently forwards all regular DNS queries to upstream resolvers (Cloudflare, Google, or local gateways) with zero configuration overhead.
 - **High-Throughput HTTP Chunk Cache:**
   Content-addressable local storage layer optimized for NVMe and SSD drives. Seamlessly streams cached game chunks to LAN clients at multi-gigabit wire speed.
 - **Authenticated Account Integration (Steam):**
@@ -75,7 +75,7 @@ artesian/
 │   ├── prefill/               # Content prefill & cache warming orchestrator
 │   ├── proxy/                 # HTTP reverse proxy, pass-through, & cache engine
 │   ├── scheduler/             # Cron timers & automated update checker
-│   └── services/              # Game platform modules (Steam, Epic, etc.)
+│   └── services/              # Game platform modules (Steam)
 ├── configs/
 │   └── artesian.example.yaml  # Default configuration template
 ├── docs/

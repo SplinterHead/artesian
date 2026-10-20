@@ -2,11 +2,8 @@ package scheduler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +11,7 @@ import (
 	"artesian/internal/config"
 	"artesian/internal/db"
 	"artesian/internal/prefill"
-	"artesian/internal/proxy"
+	"artesian/internal/services"
 	"artesian/internal/ws"
 
 	"github.com/robfig/cron/v3"
@@ -37,6 +34,7 @@ type Scheduler struct {
 	cfg      config.SchedulerConfig
 	db       *db.DB
 	prefill  *prefill.Manager
+	registry *services.Registry
 	cron     *cron.Cron
 	rules    map[string]*Rule
 	rulesMu  sync.RWMutex
@@ -46,11 +44,12 @@ type Scheduler struct {
 }
 
 // NewScheduler initializes the cron and update check engine
-func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manager) *Scheduler {
+func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manager, reg *services.Registry) *Scheduler {
 	s := &Scheduler{
 		cfg:      cfg,
 		db:       database,
 		prefill:  pf,
+		registry: reg,
 		cron:     cron.New(cron.WithSeconds()),
 		rules:    make(map[string]*Rule),
 		entryIDs: make(map[string]cron.EntryID),
@@ -75,14 +74,14 @@ func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manag
 		}
 	}
 
-	// 2. Ensure default Steam Update Check rule exists
-	if _, ok := s.rules["steam-update-check"]; !ok {
-		s.rules["steam-update-check"] = &Rule{
-			ID:             "steam-update-check",
-			Name:           "Steam Game Update Check",
+	// 2. Ensure default Update Check rule exists
+	if _, ok := s.rules["update-check"]; !ok {
+		s.rules["update-check"] = &Rule{
+			ID:             "update-check",
+			Name:           "Game Update Check",
 			CronExpression: "0 */10 * * * *", // Every 10 minutes
-			TaskType:       "steam_update_check",
-			Service:        "steam",
+			TaskType:       "update_check",
+			Service:        "all",
 			Enabled:        true,
 			NextRun:        time.Now().Add(10 * time.Minute),
 		}
@@ -160,8 +159,8 @@ func (s *Scheduler) executeRule(ruleID string) error {
 	s.rulesMu.Unlock()
 
 	switch rule.TaskType {
-	case "steam_update_check":
-		go s.CheckSteamUpdates()
+	case "steam_update_check", "update_check":
+		go s.CheckUpdates()
 	case "cache_sync":
 		log.Println("[Scheduler] Running daily storage sync and retention verification.")
 	}
@@ -169,13 +168,13 @@ func (s *Scheduler) executeRule(ruleID string) error {
 	return nil
 }
 
-// CheckSteamUpdates checks Steam for game updates on all managed library titles
-func (s *Scheduler) CheckSteamUpdates() {
+// CheckUpdates checks all registered platforms for game updates on managed titles
+func (s *Scheduler) CheckUpdates() {
 	if s.db == nil || s.prefill == nil {
 		return
 	}
 
-	log.Println("[Steam Update Check] Checking Steam for updates across managed titles...")
+	log.Println("[Scheduler] Checking for updates across managed titles...")
 	apps, err := s.db.GetWatchedApps()
 	if err != nil {
 		return
@@ -184,144 +183,67 @@ func (s *Scheduler) CheckSteamUpdates() {
 	for _, app := range apps {
 		// Verify service-level auto-update setting
 		if !s.db.GetServiceAutoUpdate(app.Service) {
-			log.Printf("[Steam Update Check] Skipping %s: auto-update disabled for service '%s'", app.Name, app.Service)
+			log.Printf("[Update Check] Skipping %s: auto-update disabled for service '%s'", app.Name, app.Service)
 			continue
 		}
 
 		// Verify app-level auto-update variable
 		if !app.AutoUpdate {
-			log.Printf("[Steam Update Check] Skipping %s: auto-update disabled for title", app.Name)
+			log.Printf("[Update Check] Skipping %s: auto-update disabled for title", app.Name)
 			continue
 		}
 
-		if strings.EqualFold(app.Service, "steam") {
-			s.checkSteamAppUpdate(app)
-		}
+		s.checkAppUpdate(app)
 	}
 }
 
-func (s *Scheduler) checkSteamAppUpdate(app db.WatchedApp) {
-	client := &http.Client{Timeout: 6 * time.Second}
-	apiURL := fmt.Sprintf("https://api.steamcmd.net/v1/info/%d", app.AppID)
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		log.Printf("[Steam Update Check] Error creating request for %s: %v", app.Name, err)
+func (s *Scheduler) checkAppUpdate(app db.WatchedApp) {
+	if s.registry == nil {
 		return
 	}
-	req.Header.Set("User-Agent", "Artesian/1.0 (Game Cache Proxy)")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("[Steam Update Check] Network check failed for %s: %v", app.Name, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[Steam Update Check] SteamCMD API returned HTTP %d for %s", resp.StatusCode, app.Name)
-		return
-	}
-
-	var steamCmdData struct {
-		Status string `json:"status"`
-		Data   map[string]struct {
-			ChangeNumber uint64 `json:"_change_number"`
-			Common       struct {
-				Name string `json:"name"`
-			} `json:"common"`
-			Depots map[string]json.RawMessage `json:"depots"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&steamCmdData); err != nil {
-		log.Printf("[Steam Update Check] Failed to decode API response for %s: %v", app.Name, err)
-		return
-	}
-
-	appKey := fmt.Sprintf("%d", app.AppID)
-	appData, ok := steamCmdData.Data[appKey]
+	adapter, ok := s.registry.Get(app.Service)
 	if !ok {
-		log.Printf("[Steam Update Check] No app data returned for %s (App ID %d)", app.Name, app.AppID)
 		return
 	}
 
-	liveChangeNumber := appData.ChangeNumber
-
-	// Check if any public branch manifest GID has changed
-	manifestChanged := false
-	var updatedDepotID int64
-	var newManifestGID int64
-
-	for dKey, dRaw := range appData.Depots {
-		dID, err := strconv.ParseInt(dKey, 10, 64)
-		if err != nil {
-			continue
-		}
-		var dVal struct {
-			Manifests map[string]struct {
-				Gid string `json:"gid"`
-			} `json:"manifests"`
-		}
-		if err := json.Unmarshal(dRaw, &dVal); err != nil {
-			continue
-		}
-		if pub, ok := dVal.Manifests["public"]; ok {
-			if gid, err := strconv.ParseInt(pub.Gid, 10, 64); err == nil && gid > 0 {
-				existingMeta, _ := s.db.GetDepotMeta(dID)
-				if existingMeta != nil && existingMeta.ManifestID > 0 && existingMeta.ManifestID != gid {
-					manifestChanged = true
-					updatedDepotID = dID
-					newManifestGID = gid
-				}
-			}
-		}
+	check, err := adapter.CheckAppUpdate(app.AppID, app.ChangeNumber)
+	if err != nil {
+		log.Printf("[%s Update Check] Network or API check failed for %s: %v", adapter.DisplayName(), app.Name, err)
+		return
 	}
 
 	// Baseline initialization: if app has no recorded change number (0), store baseline without an alert
 	if app.ChangeNumber == 0 {
-		if liveChangeNumber > 0 {
-			app.ChangeNumber = liveChangeNumber
+		if check.NewChangeNumber > 0 {
+			app.ChangeNumber = check.NewChangeNumber
 			_ = s.db.UpsertWatchedApp(app)
 		}
-		_ = proxy.FetchRemoteSteamAppInfo(s.db, app.AppID)
-		log.Printf("[Steam Update Check] Baseline recorded for %s (Change #%d)", app.Name, liveChangeNumber)
+		log.Printf("[%s Update Check] Baseline recorded for %s (Change #%d)", adapter.DisplayName(), app.Name, check.NewChangeNumber)
 		return
 	}
 
-	hasUpdate := (liveChangeNumber > app.ChangeNumber) || manifestChanged
-	if !hasUpdate {
+	if !check.Updated {
 		// Silently drop checks that resulted in no change
-		log.Printf("[Steam Update Check] %s is up to date (Change #%d). Check completed with no changes.", app.Name, app.ChangeNumber)
+		log.Printf("[%s Update Check] %s is up to date (Change #%d). Check completed with no changes.", adapter.DisplayName(), app.Name, app.ChangeNumber)
 		return
 	}
 
 	// Update discovered!
-	log.Printf("[Steam Update Check] UPDATE DETECTED for %s: Change #%d -> #%d (Manifest changed: %v)", app.Name, app.ChangeNumber, liveChangeNumber, manifestChanged)
-
-	// Refresh depot metadata in SQLite
-	_ = proxy.FetchRemoteSteamAppInfo(s.db, app.AppID)
+	log.Printf("[%s Update Check] UPDATE DETECTED for %s: Change #%d -> #%d (Manifest changed: %v)",
+		adapter.DisplayName(), app.Name, app.ChangeNumber, check.NewChangeNumber, check.ManifestChanged)
 
 	// Update watched_apps
-	app.ChangeNumber = liveChangeNumber
+	app.ChangeNumber = check.NewChangeNumber
 	app.Status = "prefilling"
 	_ = s.db.UpsertWatchedApp(app)
 
-	var manifestStr string
-	if newManifestGID > 0 {
-		manifestStr = fmt.Sprintf("%d", newManifestGID)
-	}
-
-	updateMsg := fmt.Sprintf("New update detected for %s (Change #%d). Automated prefill initiated.", app.Name, liveChangeNumber)
-	if manifestChanged && updatedDepotID > 0 {
-		updateMsg = fmt.Sprintf("New manifest %s detected for %s (Depot %d). Automated prefill initiated.", manifestStr, app.Name, updatedDepotID)
-	}
+	updateMsg := fmt.Sprintf("New update detected for %s (Change #%d). Automated prefill initiated.", app.Name, check.NewChangeNumber)
 
 	logEntry := db.UpdateLogEntry{
 		AppID:        app.AppID,
 		Service:      app.Service,
 		GameTitle:    app.Name,
-		ChangeNumber: liveChangeNumber,
-		ManifestID:   manifestStr,
+		ChangeNumber: check.NewChangeNumber,
 		Status:       "Discovered",
 		Message:      updateMsg,
 		DiscoveredAt: time.Now(),
@@ -336,8 +258,7 @@ func (s *Scheduler) checkSteamAppUpdate(app db.WatchedApp) {
 		"app_id":        app.AppID,
 		"name":          app.Name,
 		"service":       app.Service,
-		"change_number": liveChangeNumber,
-		"manifest_id":   manifestStr,
+		"change_number": check.NewChangeNumber,
 		"message":       logEntry.Message,
 	})
 

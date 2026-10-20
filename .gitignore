@@ -1,21 +1,78 @@
-# Compiled root binaries
+# ==============================================================================
+# Compiled Backend Binaries & Artifacts
+# ==============================================================================
+artesian
 /artesian
+cmd/artesian/artesian
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+*.a
+*.o
+*.test
+*.out
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.*
+_obj/
+_test/
+bin/
+build/
 
-# Runtime data and cache storage
+# ==============================================================================
+# Compiled Frontend Assets & Node Dependencies
+# ==============================================================================
+web/dist/
+dist/
+web/node_modules/
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vite/
+web/.vite/
+
+# ==============================================================================
+# Runtime Data, Cache Storage & SQLite Databases
+# ==============================================================================
 /data/
+data/
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 test_artesian.db
+*.manifest
 
-# Node dependencies
-web/node_modules/
-.npm/
+# ==============================================================================
+# Environment & Secret Files
+# ==============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
 
-# OS metadata
+# ==============================================================================
+# IDE & Operating System Files
+# ==============================================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

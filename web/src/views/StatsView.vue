@@ -99,64 +99,32 @@
               <td class="col-depot">
                 <div class="depots-container">
                   <!-- Steam Depots: All depots for this game bundled as clickable badges -->
-                  <template v-if="d.service === 'steam'">
-                    <template v-if="d.depot_links && d.depot_links.length > 0">
-                      <a 
-                        v-for="link in d.depot_links" 
-                        :key="link.depot_id"
-                        :href="link.lookup_url || ('https://steamdb.info/depot/' + link.depot_id)" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        class="depot-link steamdb-link"
-                        :title="'View Depot ' + link.depot_id + ' on SteamDB'"
-                      >
-                        <code>{{ link.depot_id }}</code>
-                        <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
-                      </a>
-                    </template>
+                  <template v-if="d.depot_links && d.depot_links.length > 0">
                     <a 
-                      v-else-if="d.depot_id" 
-                      :href="d.lookup_url || ('https://steamdb.info/depot/' + d.depot_id)" 
+                      v-for="link in d.depot_links" 
+                      :key="link.depot_id"
+                      :href="link.lookup_url || ('https://steamdb.info/depot/' + link.depot_id)" 
                       target="_blank" 
                       rel="noopener noreferrer"
                       class="depot-link steamdb-link"
-                      :title="'View Depot ' + d.depot_id + ' on SteamDB'"
+                      :title="'View Depot ' + link.depot_id + ' on SteamDB'"
                     >
-                      <code>{{ d.depot_id }}</code>
-                      <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
-                    </a>
-                    <span v-else class="text-muted">—</span>
-                  </template>
-
-                  <!-- Epic Games: Link to egdata.app -->
-                  <template v-else-if="d.service === 'epic'">
-                    <a 
-                      :href="d.lookup_url || 'https://egdata.app'" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      class="depot-link egdata-link"
-                      :title="'Look up chunk data on EGData (https://egdata.app)'"
-                    >
-                      <code>{{ formatChunkID(d.chunk_id) || 'egdata' }}</code>
+                      <code>{{ link.depot_id }}</code>
                       <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
                     </a>
                   </template>
-
-                  <!-- Generic / Other Stores -->
-                  <template v-else>
-                    <a 
-                      v-if="d.lookup_url" 
-                      :href="d.lookup_url" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      class="depot-link"
-                    >
-                      <code>{{ d.depot_id || formatChunkID(d.chunk_id) || 'asset' }}</code>
-                      <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
-                    </a>
-                    <code v-else-if="d.depot_id">{{ d.depot_id }}</code>
-                    <span v-else class="text-muted">—</span>
-                  </template>
+                  <a 
+                    v-else-if="d.depot_id" 
+                    :href="d.lookup_url || ('https://steamdb.info/depot/' + d.depot_id)" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    class="depot-link steamdb-link"
+                    :title="'View Depot ' + d.depot_id + ' on SteamDB'"
+                  >
+                    <code>{{ d.depot_id }}</code>
+                    <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
+                  </a>
+                  <span v-else class="text-muted">—</span>
                 </div>
               </td>
               <td class="col-size">
@@ -308,58 +276,6 @@ defineEmits(['clear-traffic']);
   color: #ffffff;
 }
 
-.store-logo-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(30, 30, 30, 0.8));
-  color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
-}
-
-.store-logo-epic:hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
-  color: #ffffff;
-}
-
-.store-logo-blizzard {
-  background: radial-gradient(circle at top left, rgba(0, 174, 255, 0.25), rgba(15, 23, 42, 0.8));
-  color: #00aeff;
-  border: 1px solid rgba(0, 174, 255, 0.35);
-  box-shadow: 0 2px 8px rgba(0, 174, 255, 0.15);
-}
-
-.store-logo-blizzard:hover {
-  border-color: rgba(0, 174, 255, 0.7);
-  box-shadow: 0 4px 14px rgba(0, 174, 255, 0.35);
-  color: #ffffff;
-}
-
-.store-logo-riot {
-  background: radial-gradient(circle at top left, rgba(235, 0, 41, 0.25), rgba(20, 10, 15, 0.8));
-  color: #eb0029;
-  border: 1px solid rgba(235, 0, 41, 0.35);
-  box-shadow: 0 2px 8px rgba(235, 0, 41, 0.15);
-}
-
-.store-logo-riot:hover {
-  border-color: rgba(235, 0, 41, 0.7);
-  box-shadow: 0 4px 14px rgba(235, 0, 41, 0.35);
-  color: #ff4d6d;
-}
-
-.store-logo-xbox {
-  background: radial-gradient(circle at top left, rgba(44, 162, 67, 0.25), rgba(10, 25, 15, 0.8));
-  color: #2ca243;
-  border: 1px solid rgba(44, 162, 67, 0.35);
-  box-shadow: 0 2px 8px rgba(44, 162, 67, 0.15);
-}
-
-.store-logo-xbox:hover {
-  border-color: rgba(44, 162, 67, 0.7);
-  box-shadow: 0 4px 14px rgba(44, 162, 67, 0.35);
-  color: #4ade80;
-}
-
 .store-logo-generic {
   background: rgba(148, 163, 184, 0.15);
   color: #94a3b8;
@@ -421,15 +337,6 @@ defineEmits(['clear-traffic']);
 
 .steamdb-link:hover {
   color: #7dd3fc;
-  text-decoration: underline;
-}
-
-.egdata-link {
-  color: #c084fc;
-}
-
-.egdata-link:hover {
-  color: #e9d5ff;
   text-decoration: underline;
 }
 

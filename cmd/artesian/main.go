@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"artesian/internal/adapters/steam"
 	"artesian/internal/api"
 	"artesian/internal/cache"
 	"artesian/internal/config"
@@ -65,26 +66,15 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 		log.Fatalf("[Artesian] Cache storage error: %v", err)
 	}
 
-	// 4. Register Game Platform Services
+	// 4. Initialize Steam Adapter & Register with Service Registry
+	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
 	registry := services.NewRegistry()
-	registry.Register(services.NewSteamService())
+	registry.Register(steamAdapter)
 	log.Println("[Artesian] Service registered: Steam")
 
-	registry.Register(services.NewEpicService())
-	log.Println("[Artesian] Service registered: Epic Games")
-
-	registry.Register(services.NewBlizzardService())
-	log.Println("[Artesian] Service registered: Battle.net")
-
-	registry.Register(services.NewRiotService())
-	log.Println("[Artesian] Service registered: Riot Games")
-
-	registry.Register(services.NewXboxService())
-	log.Println("[Artesian] Service registered: Xbox / Microsoft Store")
-
 	// 5. Initialize Prefill & Scheduler Subsystems
-	prefillMgr := prefill.NewManager(storage, database, cfg.DNS)
-	sched := scheduler.NewScheduler(cfg.Scheduler, database, prefillMgr)
+	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)
+	sched := scheduler.NewScheduler(cfg.Scheduler, database, prefillMgr, registry)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -157,7 +157,7 @@
           <tbody>
             <tr v-if="cachedGames.length === 0">
               <td colspan="5" class="empty-cell">
-                No games cached yet, they'll appear here when you start downloading in Steam or Epic Games
+                No games cached yet, they'll appear here when you start downloading in Steam
               </td>
             </tr>
             <tr v-for="item in cachedGames" :key="(item.service || 'steam') + item.app_id + item.name">
@@ -421,30 +421,6 @@ function getGameKey(game) {
   background: radial-gradient(circle at top left, rgba(102, 192, 244, 0.25), rgba(23, 26, 38, 0.8));
   color: #66c0f4;
   border: 1px solid rgba(102, 192, 244, 0.35);
-}
-
-.store-logo-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(30, 30, 30, 0.8));
-  color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-.store-logo-blizzard {
-  background: radial-gradient(circle at top left, rgba(0, 174, 255, 0.25), rgba(15, 23, 42, 0.8));
-  color: #00aeff;
-  border: 1px solid rgba(0, 174, 255, 0.35);
-}
-
-.store-logo-riot {
-  background: radial-gradient(circle at top left, rgba(235, 0, 41, 0.25), rgba(20, 10, 15, 0.8));
-  color: #eb0029;
-  border: 1px solid rgba(235, 0, 41, 0.35);
-}
-
-.store-logo-xbox {
-  background: radial-gradient(circle at top left, rgba(44, 162, 67, 0.25), rgba(10, 25, 15, 0.8));
-  color: #2ca243;
-  border: 1px solid rgba(44, 162, 67, 0.35);
 }
 
 .store-logo-generic {

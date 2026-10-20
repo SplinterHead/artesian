@@ -39,18 +39,6 @@ export const api = {
       body: JSON.stringify({ id, auto_update: autoUpdate }),
     });
   },
-  async connectService(service, username, token = '') {
-    return request('/api/v1/services/connect', {
-      method: 'POST',
-      body: JSON.stringify({ service, username, token }),
-    });
-  },
-  async disconnectService(service) {
-    return request('/api/v1/services/disconnect', {
-      method: 'POST',
-      body: JSON.stringify({ service }),
-    });
-  },
   async getAvailableGames(service = 'steam') {
     return request(`/api/v1/services/available-games?service=${encodeURIComponent(service)}`);
   },
@@ -58,24 +46,40 @@ export const api = {
     return request(`/api/v1/games/platforms?service=${encodeURIComponent(service)}&app_id=${encodeURIComponent(appId)}`);
   },
 
-  // Steam Auth
+  // Platform Authentication
+  async getAuthStatus(service = 'steam') {
+    return request(`/api/v1/auth/status?service=${encodeURIComponent(service)}`);
+  },
+  async login(service = 'steam', username, password) {
+    return request('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ service, username, password }),
+    });
+  },
+  async submit2FA(service = 'steam', code) {
+    return request('/api/v1/auth/2fa', {
+      method: 'POST',
+      body: JSON.stringify({ service, code }),
+    });
+  },
+  async logout(service = 'steam') {
+    return request('/api/v1/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ service }),
+    });
+  },
+  // Backward convenience methods for Steam
   async getSteamStatus() {
-    return request('/api/v1/steam/status');
+    return this.getAuthStatus('steam');
   },
   async steamLogin(username, password) {
-    return request('/api/v1/steam/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    });
+    return this.login('steam', username, password);
   },
   async submitSteam2FA(code) {
-    return request('/api/v1/steam/2fa', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
+    return this.submit2FA('steam', code);
   },
   async steamLogout() {
-    return request('/api/v1/steam/logout', { method: 'POST' });
+    return this.logout('steam');
   },
 
   // Library & Prefill
@@ -143,8 +147,11 @@ export const api = {
       }),
     });
   },
-  async checkSteamUpdates() {
+  async checkUpdates() {
     return request('/api/v1/scheduler/check', { method: 'POST' });
+  },
+  async checkSteamUpdates() {
+    return this.checkUpdates();
   },
   async getUpdateLogs() {
     return request('/api/v1/updates/log');

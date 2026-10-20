@@ -101,50 +101,30 @@
 
         <!-- Service Action Buttons -->
         <div class="service-actions-bar mt-4">
-          <template v-if="svc.id === 'steam'">
-            <button 
-              v-if="svc.status !== 'connected'" 
-              class="btn btn-sm btn-primary btn-block" 
-              :class="{ 'btn-awaiting-2fa': svc.status === 'awaiting_2fa' }"
-              @click="handleSteamButtonClick(svc)"
-            >
-              <template v-if="svc.status === 'awaiting_2fa'">
-                <i class="fa-solid fa-shield-halved mr-1"></i> Enter 2FA / Approve
-              </template>
-              <template v-else-if="svc.status === 'connecting'">
-                <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Connecting...
-              </template>
-              <template v-else>
-                Connect Steam Account
-              </template>
+          <button 
+            v-if="svc.status !== 'connected'" 
+            class="btn btn-sm btn-primary btn-block" 
+            :class="{ 'btn-awaiting-2fa': svc.status === 'awaiting_2fa' }"
+            @click="handleSteamButtonClick(svc)"
+          >
+            <template v-if="svc.status === 'awaiting_2fa'">
+              <i class="fa-solid fa-shield-halved mr-1"></i> Enter 2FA / Approve
+            </template>
+            <template v-else-if="svc.status === 'connecting'">
+              <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Connecting...
+            </template>
+            <template v-else>
+              Connect Steam Account
+            </template>
+          </button>
+          <div v-else class="connected-btn-group">
+            <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('logout-steam')">
+              Disconnect ({{ svc.username }})
             </button>
-            <div v-else class="connected-btn-group">
-              <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('logout-steam')">
-                Disconnect ({{ svc.username }})
-              </button>
-              <button class="btn btn-sm btn-secondary" @click="$emit('switch-tab', 'library')">
-                Open Library →
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <div v-if="svc.status === 'connected'" class="connected-btn-group">
-              <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('disconnect-service', svc)">
-                Disconnect ({{ svc.username }})
-              </button>
-              <button class="btn btn-sm btn-secondary" @click="$emit('switch-tab', 'library')">
-                Open Library →
-              </button>
-            </div>
-            <div v-else class="future-service-row">
-              <button class="btn btn-sm btn-primary" @click="$emit('open-connect', svc)">
-                Connect {{ svc.display_name }}
-              </button>
-              <button class="btn btn-xs btn-secondary" @click="$emit('open-details', svc)">
-                Details
-              </button>
-            </div>
-          </template>
+            <button class="btn btn-sm btn-secondary" @click="$emit('switch-tab', 'library')">
+              Open Library →
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -169,9 +149,6 @@ const emit = defineEmits([
   'open-steam-2fa',
   'logout-steam', 
   'switch-tab', 
-  'open-details',
-  'open-connect',
-  'disconnect-service'
 ]);
 
 function handleSteamButtonClick(svc) {
@@ -183,26 +160,10 @@ function handleSteamButtonClick(svc) {
 }
 
 function getServiceStatusText(svc) {
-  if (svc.id === 'steam') {
-    if (svc.status === 'connected') return `Connected (${svc.username})`;
-    if (svc.status === 'awaiting_2fa') return 'Awaiting 2FA / Approval';
-    if (svc.status === 'connecting') return 'Connecting...';
-    return 'Disconnected';
-  }
-  if (svc.status === 'connected') {
-    return `Connected (${svc.username})`;
-  }
-  return 'Active (Ready)';
-}
-
-function getShortName(svc) {
-  if (!svc) return '';
-  if (svc.id === 'steam') return 'Steam';
-  if (svc.id === 'epic') return 'Epic Games';
-  if (svc.id === 'blizzard') return 'Battle.net';
-  if (svc.id === 'riot') return 'Riot Games';
-  if (svc.id === 'xbox') return 'Xbox Store';
-  return svc.display_name;
+  if (svc.status === 'connected') return `Connected (${svc.username})`;
+  if (svc.status === 'awaiting_2fa') return 'Awaiting 2FA / Approval';
+  if (svc.status === 'connecting') return 'Connecting...';
+  return 'Disconnected';
 }
 </script>
 
@@ -302,30 +263,6 @@ function getShortName(svc) {
   color: #66c0f4;
   background: rgba(102, 192, 244, 0.1);
   border-color: rgba(102, 192, 244, 0.25);
-}
-
-.service-icon-box.icon-epic {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.service-icon-box.icon-blizzard {
-  color: #00aeff;
-  background: rgba(0, 174, 255, 0.1);
-  border-color: rgba(0, 174, 255, 0.25);
-}
-
-.service-icon-box.icon-riot {
-  color: #eb0029;
-  background: rgba(235, 0, 41, 0.1);
-  border-color: rgba(235, 0, 41, 0.25);
-}
-
-.service-icon-box.icon-xbox {
-  color: #2ca243;
-  background: rgba(16, 124, 16, 0.12);
-  border-color: rgba(16, 124, 16, 0.25);
 }
 
 .service-title-area {
@@ -517,26 +454,5 @@ function getShortName(svc) {
   font-size: 0.85rem;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.future-service-row {
-  display: flex;
-  width: 100%;
-  gap: 0.75rem;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.future-service-row .btn-primary {
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.future-service-row .btn-secondary {
-  flex-shrink: 0;
-  padding: 0.5rem 0.85rem;
-  font-size: 0.8rem;
 }
 </style>

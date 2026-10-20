@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	"artesian/internal/config"
 	"artesian/internal/db"
 	"artesian/internal/manifest"
+	"artesian/internal/ports"
 	"artesian/internal/services"
 	"artesian/internal/ws"
 )
@@ -36,13 +36,13 @@ type DepotLinkInfo struct {
 type GameDownloadSession struct {
 	Key              string          `json:"key"`                // client_ip:store:game_key
 	ClientIP         string          `json:"client_ip"`          // e.g. "192.168.65.1"
-	Store            string          `json:"store"`              // e.g. "Steam", "Epic Games"
-	Service          string          `json:"service"`            // e.g. "steam", "epic"
+	Store            string          `json:"store"`              // "Steam"
+	Service          string          `json:"service"`            // "steam"
 	GameTitle        string          `json:"game_title"`         // e.g. "Game Dev Tycoon", "Counter-Strike 2"
 	AppID            int64           `json:"app_id,omitempty"`   // Steam App ID
-	Platform         string          `json:"platform"`           // "PC", "Xbox / PC"
+	Platform         string          `json:"platform"`           // e.g. "Windows", "Mac 64bit", "Linux 64bit"
 	Depots           []int64         `json:"depots"`             // Unique depot IDs downloaded for this game
-	DepotLinks       []DepotLinkInfo `json:"depot_links"`        // SteamDB / EGData links for each depot
+	DepotLinks       []DepotLinkInfo `json:"depot_links"`        // SteamDB links for each depot
 	BytesTransferred int64           `json:"bytes_transferred"`  // Sum of all chunk bytes transferred
 	TotalDepotSize   int64           `json:"total_depot_size"`   // Full combined depot size across all depots
 	ChunkCount       int64           `json:"chunk_count"`        // Total files/chunks downloaded
@@ -67,12 +67,12 @@ type TrafficEvent struct {
 	Service          string `json:"service"`
 
 	// Enriched fields for Active Downloads panel
-	Store          string               `json:"store"`             // "Steam", "Epic Games", "Battle.net", "Riot Games", "Xbox"
-	GameTitle      string               `json:"game_title"`        // e.g. "Counter-Strike 2", "Fortnite"
-	Platform       string               `json:"platform"`          // e.g. "PC"
+	Store          string               `json:"store"`             // "Steam"
+	GameTitle      string               `json:"game_title"`        // e.g. "Counter-Strike 2"
+	Platform       string               `json:"platform"`          // e.g. "Windows", "Mac 64bit"
 	DepotID        int64                `json:"depot_id,omitempty"` // e.g. 731
 	ChunkID        string               `json:"chunk_id,omitempty"` // e.g. "chunk_01" or "1a9ae1fc921de40b"
-	LookupURL      string               `json:"lookup_url,omitempty"` // steamdb or egdata link!
+	LookupURL      string               `json:"lookup_url,omitempty"` // SteamDB link
 	TotalDepotSize int64                `json:"total_depot_size"`  // Total bytes for this depot or game
 	Session        *GameDownloadSession `json:"session,omitempty"` // Unified game download session
 }
@@ -101,28 +101,12 @@ type proxyContextData struct {
 // DepotRegex extracts depot IDs from game CDN paths
 var DepotRegex = regexp.MustCompile(`/depot/(\d+)`)
 
-// EpicBuildRegex extracts app names from Epic CDN paths (e.g. /Builds/Fortnite/...)
-var EpicBuildRegex = regexp.MustCompile(`/Builds/([^/]+)`)
-
-// EpicChunkRegex extracts chunk and manifest file names from Epic CDN paths
-var EpicChunkRegex = regexp.MustCompile(`([^/]+)\.(chunk|manifest)`)
-
 // FormatStoreName normalizes internal service names to display store titles
 func FormatStoreName(service string) string {
-	switch strings.ToLower(service) {
-	case "steam":
+	if strings.EqualFold(service, "steam") {
 		return "Steam"
-	case "epic":
-		return "Epic Games"
-	case "blizzard":
-		return "Battle.net"
-	case "riot":
-		return "Riot Games"
-	case "xbox":
-		return "Xbox"
-	default:
-		return strings.Title(service)
 	}
+	return strings.Title(service)
 }
 
 
@@ -308,10 +292,14 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 					go func(svcName, cKey string, data []byte) {
 						destPath, written, err := s.cache.Store(svcName, cKey, bytes.NewReader(data))
 						if err == nil && s.db != nil {
-							// 1. Steam chunk caching
-							depotID, chunkHash, ok := cache.ParseSteamChunkExtract(cKey)
-							if ok {
-								_ = s.db.RecordChunk(chunkHash, svcName, depotID, 0, written, destPath)
+							// 1. Chunk caching via matched platform adapter
+							if s.registry != nil {
+								if adapter, ok := s.registry.Get(svcName); ok {
+									assetID, chunkHash, ok := adapter.ParseChunkKey(cKey)
+									if ok {
+										_ = s.db.RecordChunk(chunkHash, svcName, assetID, 0, written, destPath)
+									}
+								}
 							}
 
 							// 2. Steam manifest interception and automatic chunk indexing
@@ -430,9 +418,10 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 			duration := time.Since(start).Milliseconds()
 
 			// Increment hit in SQLite
-			if depotID, chunkHash, ok := cache.ParseSteamChunkExtract(cacheKey); ok && s.db != nil {
-				_ = depotID
-				s.db.IncrementChunkHit(chunkHash)
+			if service != nil && s.db != nil {
+				if _, chunkHash, ok := service.ParseChunkKey(cacheKey); ok {
+					s.db.IncrementChunkHit(chunkHash)
+				}
 			}
 
 			// ONLY log & broadcast if service is one of our tracked CDNs
@@ -473,57 +462,20 @@ func (s *Server) passThrough(w http.ResponseWriter, req *http.Request, svc servi
 	}
 }
 
-// ResolveSteamBaseAppID finds the base App ID from a depot ID
-func ResolveSteamBaseAppID(depotID int64) int64 {
-	if depotID <= 0 {
-		return 0
-	}
-	if depotID%10 == 0 {
-		return depotID
-	}
-	return depotID - (depotID % 10)
-}
-
-// ResolveGameTitle attempts to identify a user-friendly game title from depot ID, app names, and store
-func ResolveGameTitle(database *db.DB, service string, depotID int64, uri string) string {
-	if service == "steam" {
-		if depotID > 0 {
-			info := ResolveSteamDepot(database, depotID, "")
-			return info.GameTitle
-		}
-		return "Steam Game Client"
-	}
-	if service == "epic" {
-		var appName string
-		if matches := EpicBuildRegex.FindStringSubmatch(uri); len(matches) > 1 {
-			appName = matches[1]
-		}
-		title, _ := ResolveEpicGame(database, appName, "")
-		return title
-	}
-	if service == "blizzard" {
-		return "Battle.net Game"
-	}
-	if service == "riot" {
-		return "Valorant / Riot Game"
-	}
-	if service == "xbox" {
-		return "Xbox Game Package"
-	}
-	return "Game Asset"
-}
-
 // RecordGameTraffic bundles all chunk requests into a single unified session per game and client IP
 func (s *Server) RecordGameTraffic(clientIP, service, gameTitle, platform, uri string, depotID int64, baseAppID int64, chunkID, lookupURL string, bytesCount int64, isHit bool) *GameDownloadSession {
-	if service == "steam" && baseAppID <= 0 && depotID > 0 {
-		baseAppID = ResolveSteamBaseAppID(depotID)
+	var adapter ports.PlatformAdapter
+	if s.registry != nil {
+		adapter, _ = s.registry.Get(service)
+	}
+
+	if baseAppID <= 0 && depotID > 0 && adapter != nil {
+		baseAppID = adapter.ResolveBaseAppID(depotID)
 	}
 
 	var sessionKey string
-	if service == "steam" && baseAppID > 0 {
-		sessionKey = fmt.Sprintf("%s:steam:%d", clientIP, baseAppID)
-	} else if service == "epic" {
-		sessionKey = fmt.Sprintf("%s:epic:%s", clientIP, strings.ToLower(gameTitle))
+	if baseAppID > 0 {
+		sessionKey = fmt.Sprintf("%s:%s:%d", clientIP, service, baseAppID)
 	} else {
 		sessionKey = fmt.Sprintf("%s:%s:%s", clientIP, service, strings.ToLower(gameTitle))
 	}
@@ -586,13 +538,6 @@ func (s *Server) RecordGameTraffic(clientIP, service, gameTitle, platform, uri s
 				LookupURL: lookupURL,
 			})
 		}
-	} else if service == "epic" && lookupURL != "" {
-		if len(session.DepotLinks) == 0 {
-			session.DepotLinks = append(session.DepotLinks, DepotLinkInfo{
-				ChunkID:   chunkID,
-				LookupURL: lookupURL,
-			})
-		}
 	}
 
 	session.LastActive = now
@@ -610,9 +555,11 @@ func (s *Server) RecordGameTraffic(clientIP, service, gameTitle, platform, uri s
 	// Bundle size calculation: dynamically looks up size for all depots in this session
 	var combinedDepotSize int64
 	for _, d := range session.Depots {
-		info := ResolveSteamDepot(s.db, d, "")
-		if info.TotalSize > 0 {
-			combinedDepotSize += info.TotalSize
+		if adapter != nil {
+			info := adapter.ResolveDepot(d, "")
+			if info.TotalSize > 0 {
+				combinedDepotSize += info.TotalSize
+			}
 		}
 	}
 	if combinedDepotSize > 0 {
@@ -640,6 +587,13 @@ func (s *Server) RecordPrefillProgress(clientIP, service, gameTitle, platform st
 	now := time.Now()
 	nowStr := now.Format("15:04:05")
 
+	lookupURL := fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
+	if s.registry != nil {
+		if adapter, ok := s.registry.Get(service); ok {
+			lookupURL = adapter.DepotLookupURL(depotID)
+		}
+	}
+
 	session, exists := s.activeDownloads[sessionKey]
 	if !exists {
 		session = &GameDownloadSession{
@@ -651,7 +605,7 @@ func (s *Server) RecordPrefillProgress(clientIP, service, gameTitle, platform st
 			AppID:            appID,
 			Platform:         platform,
 			Depots:           []int64{depotID},
-			DepotLinks:       []DepotLinkInfo{{DepotID: depotID, LookupURL: fmt.Sprintf("https://steamdb.info/depot/%d", depotID)}},
+			DepotLinks:       []DepotLinkInfo{{DepotID: depotID, LookupURL: lookupURL}},
 			BytesTransferred: bytesTransferred,
 			TotalDepotSize:   totalBytes,
 			ChunkCount:       1,
@@ -687,7 +641,7 @@ func (s *Server) RecordPrefillProgress(clientIP, service, gameTitle, platform st
 			session.Depots = append(session.Depots, depotID)
 			session.DepotLinks = append(session.DepotLinks, DepotLinkInfo{
 				DepotID:   depotID,
-				LookupURL: fmt.Sprintf("https://steamdb.info/depot/%d", depotID),
+				LookupURL: lookupURL,
 			})
 		}
 	}
@@ -843,49 +797,39 @@ func (s *Server) publishTraffic(rawClientIP, host, method, uri, userAgent string
 	var platform string
 	var baseAppID int64
 
-	if service == "steam" {
-		if matches := DepotRegex.FindStringSubmatch(uri); len(matches) > 1 {
-			depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+	var adapter ports.PlatformAdapter
+	if s.registry != nil {
+		adapter, _ = s.registry.Get(service)
+	}
+
+	if adapter != nil {
+		if assetID, cHash, ok := adapter.ParseChunkKey(uri); ok {
+			depotID = assetID
+			chunkID = cHash
+		}
+		if depotID == 0 {
+			if matches := DepotRegex.FindStringSubmatch(uri); len(matches) > 1 {
+				depotID, _ = strconv.ParseInt(matches[1], 10, 64)
+			}
 		}
 		if depotID > 0 {
 			chunkID = fmt.Sprintf("%d", depotID)
-			lookupURL = fmt.Sprintf("https://steamdb.info/depot/%d", depotID)
-			info := ResolveSteamDepot(s.db, depotID, userAgent)
+			lookupURL = adapter.DepotLookupURL(depotID)
+			info := adapter.ResolveDepot(depotID, userAgent)
 			gameTitle = info.GameTitle
 			platform = info.Platform
 			baseAppID = info.AppID
 		} else {
-			gameTitle = "Steam Game Client"
-			platform = FormatPlatform("", "", userAgent)
+			info := adapter.ResolveDepot(0, userAgent)
+			gameTitle = info.GameTitle
+			platform = info.Platform
+			if gameTitle == "" {
+				gameTitle = fmt.Sprintf("%s Game Client", adapter.DisplayName())
+			}
 		}
-	} else if service == "epic" {
-		if matches := EpicChunkRegex.FindStringSubmatch(uri); len(matches) > 1 {
-			chunkID = matches[1]
-		}
-		var appName string
-		if matches := EpicBuildRegex.FindStringSubmatch(uri); len(matches) > 1 {
-			appName = matches[1]
-		}
-		if appName != "" {
-			lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(appName))
-		} else if chunkID != "" {
-			lookupURL = fmt.Sprintf("https://egdata.app/search?title=%s", url.QueryEscape(chunkID))
-		} else {
-			lookupURL = "https://egdata.app"
-		}
-		gameTitle, platform = ResolveEpicGame(s.db, appName, userAgent)
-	} else if service == "blizzard" {
-		gameTitle = "Battle.net Game"
-		platform = FormatPlatform("", "", userAgent)
-	} else if service == "riot" {
-		gameTitle = "Valorant / Riot Game"
-		platform = FormatPlatform("", "", userAgent)
-	} else if service == "xbox" {
-		gameTitle = "Xbox Game Package"
-		platform = "Xbox / PC"
 	} else {
-		gameTitle = "Game Asset"
-		platform = FormatPlatform("", "", userAgent)
+		gameTitle = FormatStoreName(service)
+		platform = "PC"
 	}
 
 	session := s.RecordGameTraffic(clientIP, service, gameTitle, platform, uri, depotID, baseAppID, chunkID, lookupURL, bytesCount, isHit)

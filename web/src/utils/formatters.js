@@ -55,14 +55,8 @@ export function formatChunkID(id) {
 }
 
 export function formatStore(service) {
-  switch ((service || '').toLowerCase()) {
-    case 'steam': return 'Steam';
-    case 'epic': return 'Epic Games';
-    case 'blizzard': return 'Battle.net';
-    case 'riot': return 'Riot Games';
-    case 'xbox': return 'Xbox';
-    default: return service ? service.toUpperCase() : 'Game CDN';
-  }
+  if ((service || '').toLowerCase() === 'steam') return 'Steam';
+  return service ? service.toUpperCase() : 'Steam';
 }
 
 export function getLogoKey(service, store) {
@@ -70,11 +64,7 @@ export function getLogoKey(service, store) {
   if (platformLogos[s]) return s;
   const st = (store || '').toLowerCase();
   if (st.includes('steam')) return 'steam';
-  if (st.includes('epic')) return 'epic';
-  if (st.includes('battle') || st.includes('blizzard')) return 'blizzard';
-  if (st.includes('riot') || st.includes('valorant')) return 'riot';
-  if (st.includes('xbox')) return 'xbox';
-  return null;
+  return 'steam';
 }
 
 export function getPlatformIcon(platform) {

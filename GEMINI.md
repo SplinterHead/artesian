@@ -27,11 +27,11 @@ This file provides critical architectural context, developer guidelines, convent
    - Settings modified in the Web UI (Upstream DNS, Interception IP, Storage Path, Cache Quota, Scheduler Cron timers) are written directly to SQLite and persist across restarts.
 3. **Per-Service & Per-App Auto-Update Variable**:
    - `auto_update` is a dynamic variable configured per-service and per-app, not hardcoded.
-   - Each platform service (Steam, Epic, Blizzard, Riot, Xbox) has an `auto_update` toggle seeded into SQLite `config_settings` (`service_<name>_auto_update`) and toggleable from the Accounts & CDN Modules UI.
+   - The platform service (Steam) has an `auto_update` toggle seeded into SQLite `config_settings` (`service_steam_auto_update`) and toggleable from the Accounts & CDN Modules UI.
    - Games in `watched_apps` store `auto_update` as a variable in SQLite, defaulting to the service's auto-update preference upon addition, and toggleable directly in the Game Library table.
    - The scheduler update check worker checks both the service-level auto-update setting and the app-level `auto_update` variable before running update checks.
-4. **Steam Update Check Subsystem (`steam-update-check`)**:
-   - The periodic Steam change detection rule is named `steam-update-check` (formerly `steam-pics-poller`).
+4. **Game Update Check Subsystem (`update-check`)**:
+   - The periodic game update detection rule is named `update-check` (with `task_type = "update_check"`).
    - Configurable via robfig/cron (`scheduler_rules` in SQLite) and editable in real-time from the Updates page UI.
    - **Update Log Silence on No Change**: Routine checks that result in no changes are silently dropped. The Update Log only records genuine discovered updates/patches and new game additions; `Update check completed...` messages are never logged to SQLite.
 5. **Zero Fictional Data / Real Authentication Only**:
@@ -46,12 +46,12 @@ This file provides critical architectural context, developer guidelines, convent
 
 ## 3. Steam Authentication & Library Integration
 
-### Authentication Flow (`internal/steam/client.go`, `Steam2FAModal.vue`, `AccountsView.vue`)
+### Authentication Flow (`internal/adapters/steam/auth.go`, `Steam2FAModal.vue`, `AccountsView.vue`)
 - Connects directly to the Steam Authentication Service (`IAuthenticationService`) and Steam Connection Manager (CM).
 - Handles username/password login and both Steam Mobile push notification ("Approve/Deny") challenges and manual code entries (Mobile TOTP authenticator or Email codes).
 - **Mobile Push Notification Approval ("Approve / Deny")**:
-  - When Steam returns mobile push confirmation (`AllowedConfirmations` with `ConfirmationType == 1`), `client.go` launches a background polling goroutine (`pollForApproval`) calling `PollAuthSessionStatus` every ~1.5s.
-  - Tapping **"Approve"** on the Steam Mobile app is detected automatically; Artesian exchanges the token via `/jwt/finalizelogin`, acquires `steamLoginSecure` cookies, saves the session to SQLite, and broadcasts `connected` over WebSockets to log in seamlessly without requiring manual code entry.
+  - When Steam returns mobile push confirmation (`AllowedConfirmations` with `ConfirmationType == 1`), `auth.go` launches a background polling goroutine (`pollForApproval`) calling `PollAuthSessionStatus` every ~1.5s.
+  - Tapping **"Approve"** on the Steam Mobile app is detected automatically; Artesian exchanges the token via `/jwt/finalizelogin`, acquires `steamLoginSecure` cookies, saves the session to SQLite `auth_sessions`, and broadcasts `steam:status` over WebSockets to log in seamlessly without requiring manual code entry.
   - Tapping **"Deny"** (`EResult 15`) or expiration (`EResult 27`) terminates the poll cleanly and broadcasts an appropriate user notification.
 - **Accurate Code Type Submission**:
   - Submitting codes manually via `UpdateAuthSessionWithSteamGuardCode` uses `code_type = 3` (`k_EAuthSessionGuardType_DeviceCode`) for 5-character Mobile Authenticator TOTP codes or `code_type = 2` for email codes, avoiding invalid code rejections caused by submitting push prompt type `1`.
@@ -61,10 +61,10 @@ This file provides critical architectural context, developer guidelines, convent
   - Automatically capitalizes all entered characters, disables inputs/buttons, and shows an animated loading spinner (`fa-circle-notch fa-spin`) while verifying.
 - **Resuming Incomplete 2FA Setup**: When the Steam connection is in `"awaiting_2fa"` state, clicking the "Connect Steam Account" / "Enter 2FA / Approve" button in the Accounts tab skips the username/password form and routes directly to the 2FA code modal.
 - Includes a "Different account? Restart login" option to abort pending 2FA and restart fresh if needed.
-- Successful sessions are stored in SQLite in `steam_auth_sessions`.
+- Successful sessions are stored in SQLite in `auth_sessions` (keyed by `service`).
 - Upon daemon boot, active sessions are restored automatically (`Restored genuine Steam session for <username>`).
 
-### Dynamic Library Retrieval (`internal/steam/games.go`)
+### Dynamic Library Retrieval (`internal/adapters/steam/games.go`)
 - Uses the authenticated user's access token with `IPlayerService/GetOwnedGames/v1` to pull the user's real owned game library (including App IDs and titles).
 - Provides fallbacks to public Community XML/JSON profiles, cached depot metadata, and the local database.
 - Queries platform availability (Windows, Mac, Linux) per game.
@@ -121,12 +121,12 @@ This file provides critical architectural context, developer guidelines, convent
     1. SQLite indexed cache: `depot_manifest_chunks` (`depot_id`, `manifest_id`, `chunk_id`, `size_bytes`).
     2. Artesian manifest pool at `/data/manifests/` and `/data/cache/manifests/`.
     3. Proxy intercepted live manifests from `/depot/<depot_id>/manifest/<manifest_id>/...`.
-    4. Native pure-Go Steam CM WebSocket engine (`internal/steam/cm.go`) querying RPC `ContentServerDirectory.GetManifestRequestCode` on demand.
-- **Headless Cross-OS Prefilling via Pure-Go Steam CM Client (`internal/steam/cm.go`, `internal/prefill/prefill.go`)**:
+    4. Native pure-Go Steam CM WebSocket engine (`internal/adapters/steam/cm.go`) querying RPC `ContentServerDirectory.GetManifestRequestCode` on demand.
+- **Headless Cross-OS Prefilling via Pure-Go Steam CM Client (`internal/adapters/steam/cm.go`, `internal/prefill/prefill.go`)**:
   - Eliminates host OS restrictions (e.g. allows a macOS host or headless Linux server to prefill Windows or Linux games without Steam client installed on the host).
   - Clean, all-Golang native implementation: **zero** external C# / .NET / third-party prefill CLI binaries.
   - Connects directly to Steam Connection Managers (CM) via WebSockets (`wss://<cm-endpoint>/cmsocket/`).
-  - Authenticates with genuine session credentials stored in SQLite `steam_session` via `k_EMsgClientLogon` (5514).
+  - Authenticates with genuine session credentials stored in SQLite `auth_sessions` via `k_EMsgClientLogon` (5514).
   - Transparently uncompresses and dispatches `k_EMsgMulti` (EMsg 1) GZIP message bundles.
   - Queries Steam CM via Unified Service RPC `ContentServerDirectory.GetManifestRequestCode#1` (EMsg 151 / 147) for the depot's rotating `manifest_request_code`.
   - Streams the genuine manifest ZIP directly from Steam CDN endpoints (`/depot/<depot_id>/manifest/<manifest_id>/5/<manifest_request_code>`) using dedicated upstream DNS resolution.
@@ -186,16 +186,22 @@ docker compose ps
 
 | Path | Purpose |
 |---|---|
-| `cmd/artesian/main.go` | Entrypoint, orchestrator wiring, component startup |
-| `internal/api/api.go` | HTTP endpoints, library routes, WebSocket hub handler |
-| `internal/proxy/proxy.go` | HTTP caching proxy, active download session manager, manifest interception |
-| `internal/proxy/metadata.go` | Remote depot info fetcher via SteamCMD PICS API, manifest GID resolution |
+| `cmd/artesian/main.go` | Entrypoint, orchestrator wiring, composition root |
+| `internal/ports/ports.go` | Hexagonal port interfaces (`PlatformAdapter`, `NetworkPort`, `AuthPort`, `LibraryPort`, `MetadataPort`, `ContentPort`) |
+| `internal/services/service.go` | Platform adapter registry (`Registry`), multi-platform host identification and routing |
+| `internal/adapters/steam/adapter.go` | Hexagonal Steam Adapter constructor, state struct, dependency holder |
+| `internal/adapters/steam/auth.go` | Steam Web API authentication, Steam Guard 2FA, session persistence in SQLite |
+| `internal/adapters/steam/cm.go` | Native Go Steam CM WebSocket client, logon protocol, manifest request code RPC |
+| `internal/adapters/steam/content.go` | CDN hosts pool, chunk URL builder, chunk key regex, manifest chunk resolution |
+| `internal/adapters/steam/games.go` | Dynamic owned game fetching via Steam Web API & XML community profile |
+| `internal/adapters/steam/metadata.go` | SteamCMD PICS & Store API info, depot metadata caching, base App ID resolution |
+| `internal/adapters/steam/network.go` | Steam CDN wildcard domains, host matching, cacheability inspection |
+| `internal/api/api.go` | HTTP endpoints, library routes, generic auth routes, WebSocket hub handler |
+| `internal/proxy/proxy.go` | HTTP caching proxy, multi-platform host identification, active download sessions |
 | `internal/manifest/manifest.go` | Protobuf & ZIP manifest parser, candidate search, raw manifest persistence |
-| `internal/prefill/prefill.go` | Prefill engine, genuine Steam CDN chunk downloader |
-| `internal/steam/cm.go` | Native Go Steam CM WebSocket client, logon, manifest request code RPC |
-| `internal/steam/client.go` | Steam Web API authentication, 2FA challenge handler |
-| `internal/steam/games.go` | Dynamic owned game fetching via Steam Web API |
-| `internal/db/db.go` | SQLite schema, watched apps, depot meta, chunk records, manifest chunks |
+| `internal/prefill/prefill.go` | Prefill engine, multi-platform chunk downloader via adapter registry |
+| `internal/scheduler/scheduler.go` | robfig/cron background update check scheduler across all registered platform adapters |
+| `internal/db/db.go` | SQLite schema, watched apps, depot meta, chunk records, manifest chunks, auth sessions |
 | `internal/ws/hub.go` | Real-time WebSocket event broadcaster |
 | `web/src/components/modals/AddGameModal.vue` | Game Add modal with interactive text filter input |
 | `web/src/views/StatsView.vue` | Dashboard with Active Downloads table, Artesian badge, progress bar |

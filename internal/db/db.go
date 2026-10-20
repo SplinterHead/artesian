@@ -91,16 +91,17 @@ type ManifestChunkRecord struct {
 }
 
 
-// SteamSession represents authenticated Steam credentials
-type SteamSession struct {
-	Username       string    `json:"username"`
-	SteamID        string    `json:"steam_id"`
-	AccessToken    string    `json:"access_token"`
-	RefreshToken   string    `json:"refresh_token"`
-	SessionCookies string    `json:"session_cookies"`
-	ClientID       string    `json:"client_id"`
-	IsActive       bool      `json:"is_active"`
-	UpdatedAt      time.Time `json:"updated_at"`
+// AuthSession represents authenticated platform credentials
+type AuthSession struct {
+	Service      string    `json:"service"`
+	Username     string    `json:"username"`
+	AccountID    string    `json:"account_id"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	SessionData  string    `json:"session_data"`
+	ClientID     string    `json:"client_id"`
+	IsActive     bool      `json:"is_active"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // StatSummary holds bandwidth and cache hit statistics
@@ -178,23 +179,16 @@ func (db *DB) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_chunk_depot ON chunk_cache(service, depot_id);
 	CREATE INDEX IF NOT EXISTS idx_chunk_app ON chunk_cache(service, app_id);
 
-	CREATE TABLE IF NOT EXISTS steam_session (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
+	CREATE TABLE IF NOT EXISTS auth_sessions (
+		service TEXT PRIMARY KEY,
 		username TEXT NOT NULL,
-		steam_id TEXT DEFAULT '',
+		account_id TEXT DEFAULT '',
 		access_token TEXT,
 		refresh_token TEXT,
-		session_cookies TEXT DEFAULT '',
+		session_data TEXT DEFAULT '',
 		client_id TEXT,
 		is_active BOOLEAN DEFAULT 0,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE IF NOT EXISTS service_credentials (
-		service TEXT PRIMARY KEY,
-		username TEXT NOT NULL,
-		token TEXT DEFAULT '',
-		connected_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS request_logs (
@@ -314,10 +308,6 @@ func (db *DB) seedDefaults() error {
 		"cache_chunk_size":             "1048576",       // 1 MB
 		"scheduler_enabled":            "true",
 		"service_steam_auto_update":    "true",
-		"service_epic_auto_update":     "true",
-		"service_blizzard_auto_update": "true",
-		"service_riot_auto_update":     "true",
-		"service_xbox_auto_update":     "true",
 	}
 
 	for k, v := range defaultSettings {
@@ -327,11 +317,11 @@ func (db *DB) seedDefaults() error {
 	// 2. Seed default scheduler rules if not exists
 	defaultRules := []SchedulerRule{
 		{
-			ID:             "steam-update-check",
-			Name:           "Steam Game Update Check",
+			ID:             "update-check",
+			Name:           "Game Update Check",
 			CronExpression: "0 */10 * * * *", // Every 10 minutes
-			TaskType:       "steam_update_check",
-			Service:        "steam",
+			TaskType:       "update_check",
+			Service:        "all",
 			Enabled:        true,
 			NextRun:        time.Now().Add(10 * time.Minute),
 		},
@@ -481,15 +471,21 @@ func (db *DB) AddUpdateLog(entry UpdateLogEntry) error {
 	return err
 }
 
-// GetSteamSession retrieves the active Steam session if present
-func (db *DB) GetSteamSession() (*SteamSession, error) {
-	var sess SteamSession
+// GetAuthSession retrieves the active session for a given platform service
+func (db *DB) GetAuthSession(service string) (*AuthSession, error) {
+	if db == nil {
+		return nil, sql.ErrNoRows
+	}
+	if service == "" {
+		service = "steam"
+	}
+	var sess AuthSession
 	var isActive interface{}
 	var updatedAtStr sql.NullString
 	err := db.QueryRow(`
-		SELECT username, COALESCE(steam_id, ''), COALESCE(access_token, ''), COALESCE(refresh_token, ''), COALESCE(session_cookies, ''), COALESCE(client_id, ''), is_active, updated_at
-		FROM steam_session WHERE id = 1
-	`).Scan(&sess.Username, &sess.SteamID, &sess.AccessToken, &sess.RefreshToken, &sess.SessionCookies, &sess.ClientID, &isActive, &updatedAtStr)
+		SELECT service, username, COALESCE(account_id, ''), COALESCE(access_token, ''), COALESCE(refresh_token, ''), COALESCE(session_data, ''), COALESCE(client_id, ''), is_active, updated_at
+		FROM auth_sessions WHERE service = ?
+	`, service).Scan(&sess.Service, &sess.Username, &sess.AccountID, &sess.AccessToken, &sess.RefreshToken, &sess.SessionData, &sess.ClientID, &isActive, &updatedAtStr)
 	if err != nil {
 		return nil, err
 	}
@@ -515,28 +511,40 @@ func (db *DB) GetSteamSession() (*SteamSession, error) {
 	return &sess, nil
 }
 
-// SaveSteamSession saves or updates the active Steam session
-func (db *DB) SaveSteamSession(sess *SteamSession) error {
+// SaveAuthSession saves or updates an active session for a platform service
+func (db *DB) SaveAuthSession(sess *AuthSession) error {
+	if db == nil || sess == nil {
+		return nil
+	}
+	if sess.Service == "" {
+		sess.Service = "steam"
+	}
 	query := `
-	INSERT INTO steam_session (id, username, steam_id, access_token, refresh_token, session_cookies, client_id, is_active, updated_at)
-	VALUES (1, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(id) DO UPDATE SET 
+	INSERT INTO auth_sessions (service, username, account_id, access_token, refresh_token, session_data, client_id, is_active, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(service) DO UPDATE SET 
 		username = excluded.username,
-		steam_id = excluded.steam_id,
+		account_id = excluded.account_id,
 		access_token = excluded.access_token,
 		refresh_token = excluded.refresh_token,
-		session_cookies = excluded.session_cookies,
+		session_data = excluded.session_data,
 		client_id = excluded.client_id,
 		is_active = excluded.is_active,
 		updated_at = CURRENT_TIMESTAMP;
 	`
-	_, err := db.Exec(query, sess.Username, sess.SteamID, sess.AccessToken, sess.RefreshToken, sess.SessionCookies, sess.ClientID, sess.IsActive)
+	_, err := db.Exec(query, sess.Service, sess.Username, sess.AccountID, sess.AccessToken, sess.RefreshToken, sess.SessionData, sess.ClientID, sess.IsActive)
 	return err
 }
 
-// ClearSteamSession logs out the Steam session
-func (db *DB) ClearSteamSession() error {
-	_, err := db.Exec("UPDATE steam_session SET is_active = 0, access_token = '', refresh_token = '', session_cookies = '' WHERE id = 1")
+// ClearAuthSession marks a session as inactive and clears tokens
+func (db *DB) ClearAuthSession(service string) error {
+	if db == nil {
+		return nil
+	}
+	if service == "" {
+		service = "steam"
+	}
+	_, err := db.Exec("UPDATE auth_sessions SET is_active = 0, access_token = '', refresh_token = '', session_data = '' WHERE service = ?", service)
 	return err
 }
 
@@ -852,52 +860,6 @@ func (db *DB) DeleteChunksAndManifestsForApp(appID int64, service string) error 
 	}
 
 	return nil
-}
-
-
-// GetConnectedCredentials returns map of connected services to usernames
-func (db *DB) GetConnectedCredentials() (map[string]string, error) {
-	creds := make(map[string]string)
-	if db == nil {
-		return creds, nil
-	}
-	rows, err := db.Query("SELECT service, username FROM service_credentials")
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var svc, user string
-			if err := rows.Scan(&svc, &user); err == nil {
-				creds[svc] = user
-			}
-		}
-	}
-	return creds, nil
-}
-
-// SetServiceCredential saves credentials for a game platform service
-func (db *DB) SetServiceCredential(service, username, token string) error {
-	if db == nil {
-		return nil
-	}
-	query := `
-	INSERT INTO service_credentials (service, username, token, connected_at)
-	VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(service) DO UPDATE SET
-		username = excluded.username,
-		token = excluded.token,
-		connected_at = CURRENT_TIMESTAMP;
-	`
-	_, err := db.Exec(query, service, username, token)
-	return err
-}
-
-// RemoveServiceCredential removes credentials for a game platform service
-func (db *DB) RemoveServiceCredential(service string) error {
-	if db == nil {
-		return nil
-	}
-	_, err := db.Exec("DELETE FROM service_credentials WHERE service = ?", service)
-	return err
 }
 
 // InterceptedGame represents a game discovered/intercepted in cache that is not in watched_apps

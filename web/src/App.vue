@@ -63,10 +63,7 @@
         @open-steam-login="handleOpenSteamLogin"
         @open-steam-2fa="openSteam2FAModal"
         @logout-steam="logoutSteam"
-        @open-connect="serviceToConnect = $event"
-        @disconnect-service="handleDisconnectService"
         @switch-tab="currentTab = $event"
-        @open-details="selectedServiceInfo = $event"
       />
     </main>
 
@@ -95,18 +92,6 @@
       :existing-library="library"
       @submit="saveNewGame"
       @switch-tab="currentTab = $event"
-    />
-
-    <ConnectServiceModal
-      :service="serviceToConnect"
-      :loading="connectingService"
-      @close="serviceToConnect = null"
-      @submit="handleConnectService"
-    />
-
-    <ServiceDetailsModal 
-      :service="selectedServiceInfo" 
-      @close="selectedServiceInfo = null"
     />
 
     <ConfirmDeleteModal 
@@ -144,8 +129,6 @@ import AccountsView from './views/AccountsView.vue';
 import SteamLoginModal from './components/modals/SteamLoginModal.vue';
 import Steam2FAModal from './components/modals/Steam2FAModal.vue';
 import AddGameModal from './components/modals/AddGameModal.vue';
-import ServiceDetailsModal from './components/modals/ServiceDetailsModal.vue';
-import ConnectServiceModal from './components/modals/ConnectServiceModal.vue';
 import ConfirmDeleteModal from './components/modals/ConfirmDeleteModal.vue';
 
 // Navigation State
@@ -181,9 +164,6 @@ const stats = ref({
 
 // Services State
 const servicesList = ref(DEFAULT_SERVICES);
-const selectedServiceInfo = ref(null);
-const serviceToConnect = ref(null);
-const connectingService = ref(false);
 
 // Steam Auth State
 const steamStatus = ref({
@@ -631,7 +611,7 @@ async function toggleServiceMonitoring(svc) {
 
 async function checkUpdatesNow() {
   try {
-    await api.checkSteamUpdates();
+    await api.checkUpdates();
     await fetchUpdateLogs();
   } catch (err) {
     console.error('Failed to trigger update check:', err);
@@ -663,31 +643,6 @@ function openAddGameModal() {
   fetchServices();
   fetchSteamStatus();
   showAddGameModal.value = true;
-}
-
-async function handleConnectService({ service, username, token }) {
-  connectingService.value = true;
-  try {
-    await api.connectService(service, username, token);
-    serviceToConnect.value = null;
-    await fetchServices();
-    await fetchSteamStatus();
-  } catch (err) {
-    alert(err.message || 'Failed to connect service');
-  } finally {
-    connectingService.value = false;
-  }
-}
-
-async function handleDisconnectService(service) {
-  if (!confirm(`Are you sure you want to disconnect credentials for ${service.display_name}?`)) return;
-  try {
-    await api.disconnectService(service.id);
-    await fetchServices();
-    await fetchSteamStatus();
-  } catch (err) {
-    alert(err.message || 'Failed to disconnect service');
-  }
 }
 
 async function saveNewGame({ appId, name, service = 'steam', platform = '', replacePlatforms = false, autoUpdate }) {

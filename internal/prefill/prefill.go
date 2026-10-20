@@ -3,13 +3,9 @@ package prefill
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +14,8 @@ import (
 	"artesian/internal/cache"
 	"artesian/internal/config"
 	"artesian/internal/db"
-	"artesian/internal/manifest"
-	"artesian/internal/proxy"
-	"artesian/internal/steam"
+	"artesian/internal/ports"
+	"artesian/internal/services"
 	"artesian/internal/ws"
 )
 
@@ -72,6 +67,7 @@ type Manager struct {
 	cache      *cache.Storage
 	db         *db.DB
 	dnsCfg     config.DNSConfig
+	registry   *services.Registry
 	httpClient *http.Client
 	recorder   TrafficRecorder
 	jobs       map[string]*PrefillJob
@@ -106,12 +102,13 @@ func (m *Manager) SetUpstreamDNS(upstreams []string) {
 }
 
 // NewManager initializes the prefill manager with direct upstream DNS resolution
-func NewManager(c *cache.Storage, database *db.DB, dnsCfg config.DNSConfig) *Manager {
+func NewManager(c *cache.Storage, database *db.DB, dnsCfg config.DNSConfig, reg *services.Registry) *Manager {
 	m := &Manager{
-		cache:  c,
-		db:     database,
-		dnsCfg: dnsCfg,
-		jobs:   make(map[string]*PrefillJob),
+		cache:    c,
+		db:       database,
+		dnsCfg:   dnsCfg,
+		registry: reg,
+		jobs:     make(map[string]*PrefillJob),
 	}
 	if len(dnsCfg.UpstreamDNS) > 0 {
 		m.SetUpstreamDNS(dnsCfg.UpstreamDNS)
@@ -390,7 +387,7 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 				}
 
 				// Download chunk directly into cache storage and record in DB
-				m.downloadChunk(job.AppID, chunk.DepotID, chunk)
+				m.downloadChunk(job.Service, job.AppID, chunk.DepotID, chunk)
 				atomic.AddInt64(&downloadedChunks, 1)
 				nowBytes := atomic.AddInt64(&downloadedBytes, chunk.SizeBytes)
 
@@ -449,21 +446,28 @@ func (m *Manager) runPrefill(ctx context.Context, job *PrefillJob) {
 	log.Printf("[Prefill Engine] Successfully prefilled %s (100%% cached in tank).", job.AppName)
 }
 
-func (m *Manager) downloadChunk(appID, depotID int64, chunk ChunkMeta) {
+func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk ChunkMeta) {
 	chunkURL := fmt.Sprintf("/depot/%d/chunk/%s", depotID, chunk.ChunkID)
 
-	cdnHosts := []string{
-		"cache9-lhr1.steamcontent.com",
-		"cache10-lhr1.steamcontent.com",
-		"cache11-lhr1.steamcontent.com",
-		"alibaba.cdn.steampipe.steamcontent.com",
-		"steampipe.akamaized.net",
-		"lancache.steamcontent.com",
+	var adapter ports.PlatformAdapter
+	if m.registry != nil {
+		adapter, _ = m.registry.Get(service)
+	}
+
+	var cdnHosts []string
+	if adapter != nil {
+		cdnHosts = adapter.GetCDNHosts()
+	}
+	if len(cdnHosts) == 0 {
+		cdnHosts = []string{"cache9-lhr1.steamcontent.com"}
 	}
 
 	var downloaded bool
 	for _, host := range cdnHosts {
 		reqURL := fmt.Sprintf("http://%s%s", host, chunkURL)
+		if adapter != nil {
+			reqURL = adapter.BuildChunkURL(host, depotID, chunk.ChunkID)
+		}
 		req, err := http.NewRequestWithContext(context.Background(), "GET", reqURL, nil)
 		if err != nil {
 			continue
@@ -474,10 +478,10 @@ func (m *Manager) downloadChunk(appID, depotID int64, chunk ChunkMeta) {
 
 		resp, err := m.httpClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			destPath, written, storeErr := m.cache.Store("steam", chunkURL, resp.Body)
+			destPath, written, storeErr := m.cache.Store(service, chunkURL, resp.Body)
 			_ = resp.Body.Close()
 			if storeErr == nil && m.db != nil {
-				_ = m.db.RecordChunk(chunk.ChunkID, "steam", depotID, appID, written, destPath)
+				_ = m.db.RecordChunk(chunk.ChunkID, service, depotID, appID, written, destPath)
 			}
 			downloaded = true
 			break
@@ -509,16 +513,21 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 	appID := job.AppID
 	targetPlatform := job.Platform
 	if targetPlatform == "" && m.db != nil {
-		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = 'steam' LIMIT 1", appID).Scan(&targetPlatform)
+		_ = m.db.QueryRow("SELECT COALESCE(platform, '') FROM watched_apps WHERE app_id = ? AND service = ? LIMIT 1", appID, job.Service).Scan(&targetPlatform)
+	}
+
+	var adapter ports.PlatformAdapter
+	if m.registry != nil {
+		adapter, _ = m.registry.Get(job.Service)
 	}
 
 	// Ensure depot metadata exists in depot_meta_cache with valid manifest_id
 	if m.db != nil {
 		var depotCount int
 		_ = m.db.QueryRow("SELECT COUNT(*) FROM depot_meta_cache WHERE app_id = ? AND total_size > 0 AND manifest_id > 0", appID).Scan(&depotCount)
-		if depotCount == 0 {
-			log.Printf("[Prefill Engine] App %d (%s): Depot metadata missing or manifest_id is 0, querying remote SteamCMD metadata...", appID, job.AppName)
-			if err := proxy.FetchRemoteSteamAppInfo(m.db, appID); err != nil {
+		if depotCount == 0 && adapter != nil {
+			log.Printf("[Prefill Engine] App %d (%s): Depot metadata missing or manifest_id is 0, querying remote %s metadata...", appID, job.AppName, adapter.DisplayName())
+			if err := adapter.FetchAppInfo(appID); err != nil {
 				log.Printf("[Prefill Engine] Could not fetch remote depot metadata for app %d: %v", appID, err)
 			} else {
 				log.Printf("[Prefill Engine] App %d (%s): Remote depot metadata query completed successfully", appID, job.AppName)
@@ -620,94 +629,26 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		firstDepotID = activeDepots[0].depotID
 	}
 
-	// CM Client for native Steam CM manifest resolution (initialized lazily if needed)
-	var cmClient *steam.CMClient
-	defer func() {
-		if cmClient != nil {
-			_ = cmClient.Close()
-		}
-	}()
-
 	for _, d := range activeDepots {
 		var depotChunks []ChunkMeta
 		log.Printf("[Prefill Engine] Depot %d: Resolving manifest (manifestID=%d, platform=%s)...", d.depotID, d.manifestID, d.platform)
 
-		// 1. Check if SQLite already has parsed genuine manifest chunks for this depot
-		if m.db != nil && m.db.HasManifestChunks(d.depotID) {
-			dbChunks, err := m.db.GetManifestChunks(d.depotID)
-			if err == nil && len(dbChunks) > 0 {
-				log.Printf("[Prefill Engine] Loaded %d genuine manifest chunks from database for depot %d", len(dbChunks), d.depotID)
-				for _, c := range dbChunks {
+		if adapter != nil {
+			chunks, err := adapter.ResolveManifestChunks(ctx, job.AppID, d.depotID, d.manifestID)
+			if err == nil && len(chunks) > 0 {
+				log.Printf("[Prefill Engine] Resolved %d genuine manifest chunks for depot %d", len(chunks), d.depotID)
+				for _, c := range chunks {
 					depotChunks = append(depotChunks, ChunkMeta{
 						DepotID:   d.depotID,
 						ChunkID:   c.ChunkID,
 						SizeBytes: c.SizeBytes,
 					})
 				}
+			} else if err != nil {
+				log.Printf("[Prefill Engine] Manifest resolution notice for depot %d: %v", d.depotID, err)
 			}
 		}
 
-		// 2. If not in DB, search disk for depot manifest (mounted host depotcache, intercepted manifests, etc.)
-		if len(depotChunks) == 0 {
-			var storageDir, manifestDir, depotCacheDir string
-			if m.cache != nil {
-				storageDir = m.cache.GetBaseDir()
-				manifestDir = m.cache.GetManifestDir()
-				depotCacheDir = m.cache.GetDepotCacheDir()
-			}
-			parsedChunks, manifestPath, err := manifest.FindAndParseDepotManifest(storageDir, manifestDir, depotCacheDir, d.depotID, d.manifestID)
-			if err == nil && len(parsedChunks) > 0 {
-				log.Printf("[Prefill Engine] Parsed and cached %d genuine chunks from %s for depot %d", len(parsedChunks), manifestPath, d.depotID)
-				if m.db != nil {
-					_ = m.db.SaveManifestChunks(d.depotID, d.manifestID, parsedChunks)
-				}
-				for _, c := range parsedChunks {
-					depotChunks = append(depotChunks, ChunkMeta{
-						DepotID:   d.depotID,
-						ChunkID:   c.ChunkID,
-						SizeBytes: c.SizeBytes,
-					})
-				}
-			}
-		}
-
-		// 3. If still not found and manifestID > 0, resolve natively via Steam CM in pure Go
-		if len(depotChunks) == 0 && d.manifestID > 0 && strings.EqualFold(job.Service, "steam") {
-			if cmClient == nil && m.db != nil {
-				sess, err := m.db.GetSteamSession()
-				if err != nil || sess == nil || !sess.IsActive || sess.RefreshToken == "" {
-					log.Printf("[Prefill Engine] Depot %d (manifest %d): No active Steam session in database, skipping native Steam CM request", d.depotID, d.manifestID)
-				} else {
-					cleanSteamID := strings.Trim(sess.SteamID, "'\"")
-					steamID64, _ := strconv.ParseUint(cleanSteamID, 10, 64)
-					if steamID64 > 0 {
-						log.Printf("[Prefill Engine] Authenticating with Steam CM to resolve genuine manifest for depot %d (manifest %d)...", d.depotID, d.manifestID)
-						c, err := steam.NewCMClient(ctx, sess.Username, sess.RefreshToken, steamID64)
-						if err == nil {
-							cmClient = c
-						} else {
-							log.Printf("[Prefill Engine] Steam CM connection error: %v", err)
-						}
-					}
-				}
-			}
-
-			if cmClient != nil {
-				cmChunks, err := m.fetchManifestViaCM(ctx, cmClient, job.AppID, d.depotID, d.manifestID)
-				if err == nil && len(cmChunks) > 0 {
-					log.Printf("[Prefill Engine] Pure-Go Steam CM resolved and cached %d genuine chunks for depot %d", len(cmChunks), d.depotID)
-					depotChunks = cmChunks
-				} else {
-					log.Printf("[Prefill Engine] Steam CM manifest fetch failed for depot %d: %v", d.depotID, err)
-				}
-			}
-		}
-
-		if d.manifestID <= 0 {
-			log.Printf("[Prefill Engine] Depot %d: No manifest GID discovered (manifestID=%d), skipping Steam CM request", d.depotID, d.manifestID)
-		}
-
-		// 4. Fallback notice if no genuine manifest exists anywhere yet
 		if len(depotChunks) == 0 {
 			log.Printf("[Prefill Engine] Notice: No genuine manifest resolved for depot %d (manifest %d). Waiting for game install/update via Steam client.", d.depotID, d.manifestID)
 		}
@@ -721,80 +662,5 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		ManifestID: uint64(time.Now().Unix()),
 		Chunks:     chunks,
 	}
-}
-
-// fetchManifestViaCM requests manifest request code via native Steam CM and downloads the manifest from CDN
-func (m *Manager) fetchManifestViaCM(ctx context.Context, cmClient *steam.CMClient, appID, depotID, manifestID int64) ([]ChunkMeta, error) {
-	reqCode, err := cmClient.GetManifestRequestCode(ctx, uint32(appID), uint32(depotID), uint64(manifestID), "public")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get manifest request code: %w", err)
-	}
-
-	cdnHosts := []string{
-		"cache9-lhr1.steamcontent.com",
-		"cache10-lhr1.steamcontent.com",
-		"cache11-lhr1.steamcontent.com",
-		"alibaba.cdn.steampipe.steamcontent.com",
-		"steampipe.akamaized.net",
-	}
-
-	manifestPath := fmt.Sprintf("/depot/%d/manifest/%d/5/%d", depotID, manifestID, reqCode)
-	var rawData []byte
-
-	for _, host := range cdnHosts {
-		reqURL := fmt.Sprintf("http://%s%s", host, manifestPath)
-		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-		if err != nil {
-			continue
-		}
-		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
-		req.Header.Set("X-Artesian-Prefill", "1")
-		req.Header.Set("X-Artesian-Loop", "1")
-
-		resp, err := m.httpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			data, readErr := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if readErr == nil && len(data) > 0 {
-				rawData = data
-				break
-			}
-		}
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-	}
-
-	if len(rawData) == 0 {
-		return nil, fmt.Errorf("failed to download manifest for depot %d from Steam CDN", depotID)
-	}
-
-	// Save raw manifest to disk pool
-	if m.cache != nil {
-		manifestDir := m.cache.GetManifestDir()
-		_ = os.MkdirAll(manifestDir, 0755)
-		savePath := filepath.Join(manifestDir, fmt.Sprintf("%d_%d.manifest", depotID, manifestID))
-		_ = os.WriteFile(savePath, rawData, 0644)
-	}
-
-	// Parse genuine manifest payload into chunks
-	parsedRecords, err := manifest.ParseManifestBytes(rawData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse manifest bytes: %w", err)
-	}
-
-	if m.db != nil && len(parsedRecords) > 0 {
-		_ = m.db.SaveManifestChunks(depotID, manifestID, parsedRecords)
-	}
-
-	var metas []ChunkMeta
-	for _, r := range parsedRecords {
-		metas = append(metas, ChunkMeta{
-			DepotID:   depotID,
-			ChunkID:   r.ChunkID,
-			SizeBytes: r.SizeBytes,
-		})
-	}
-	return metas, nil
 }
 

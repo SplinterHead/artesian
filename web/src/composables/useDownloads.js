@@ -12,13 +12,10 @@ export function useDownloads() {
   function getSessionKey(item) {
     if (item.key) return item.key;
     const ip = cleanClientIP(item.client_ip);
-    const service = (item.service || item.store || 'generic').toLowerCase();
-    if (service.includes('steam')) {
-      const appID = item.app_id || (item.depot_id ? Math.floor(item.depot_id / 10) * 10 : 0);
-      if (appID > 0) return `${ip}:steam:${appID}`;
-    }
+    const appID = item.app_id || (item.depot_id ? Math.floor(item.depot_id / 10) * 10 : 0);
+    if (appID > 0) return `${ip}:steam:${appID}`;
     const game = (item.game_title || 'game').toLowerCase();
-    return `${ip}:${service}:${game}`;
+    return `${ip}:steam:${game}`;
   }
 
   function sortByFirstSeen(a, b) {
@@ -110,11 +107,6 @@ export function useDownloads() {
           depot_id: evt.depot_id,
           lookup_url: evt.lookup_url || `https://steamdb.info/depot/${evt.depot_id}`,
         });
-      } else if (evt.service === 'epic' && evt.lookup_url && (!s.depot_links || s.depot_links.length === 0)) {
-        s.depot_links = [{
-          chunk_id: evt.chunk_id,
-          lookup_url: evt.lookup_url,
-        }];
       }
 
       if (evt.total_depot_size && evt.total_depot_size > 0) {
@@ -138,13 +130,13 @@ export function useDownloads() {
         first_seen: evt.first_seen || nowIso,
         last_active: nowIso,
         client_ip: evt.client_ip,
-        store: evt.store || (evt.service ? evt.service.toUpperCase() : 'Game CDN'),
-        service: evt.service,
-        game_title: evt.game_title || 'Game Asset',
+        store: 'Steam',
+        service: 'steam',
+        game_title: evt.game_title || 'Steam Game Client',
         app_id: baseApp,
         platform: evt.platform || 'PC',
         depots: evt.depot_id ? [evt.depot_id] : [],
-        depot_links: evt.depot_id ? [{ depot_id: evt.depot_id, lookup_url: evt.lookup_url }] : (evt.lookup_url ? [{ chunk_id: evt.chunk_id, lookup_url: evt.lookup_url }] : []),
+        depot_links: evt.depot_id ? [{ depot_id: evt.depot_id, lookup_url: evt.lookup_url || `https://steamdb.info/depot/${evt.depot_id}` }] : [],
         bytes_transferred: evt.bytes_transferred || 0,
         total_depot_size: (evt.total_depot_size && evt.total_depot_size > 0) ? evt.total_depot_size : 0,
         chunk_count: 1,

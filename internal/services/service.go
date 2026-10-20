@@ -1,39 +1,36 @@
 package services
 
 import (
-	"net/http"
 	"strings"
 	"sync"
+
+	"artesian/internal/ports"
 )
 
-// Service abstracts game distribution network behavior
-type Service interface {
-	Name() string
-	MatchesHost(host string) bool
-	Domains() []string
-	IsCacheable(req *http.Request) bool
-}
+// Service is an alias for ports.PlatformAdapter
+type Service = ports.PlatformAdapter
 
-// Registry manages available game platform services
+// Registry manages available game platform adapters
 type Registry struct {
-	services map[string]Service
+	adapters map[string]ports.PlatformAdapter
 	disabled map[string]bool
 	mu       sync.RWMutex
 }
 
-// NewRegistry initializes service registry
+// NewRegistry initializes platform adapter registry
 func NewRegistry() *Registry {
 	return &Registry{
-		services: make(map[string]Service),
+		adapters: make(map[string]ports.PlatformAdapter),
 		disabled: make(map[string]bool),
 	}
 }
 
-// Register adds a service to the registry
-func (r *Registry) Register(svc Service) {
+// Register adds a platform adapter to the registry
+func (r *Registry) Register(adapter ports.PlatformAdapter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.services[svc.Name()] = svc
+	key := strings.ToLower(adapter.ID())
+	r.adapters[key] = adapter
 }
 
 // SetEnabled enables or disables CDN request monitoring for a service
@@ -43,7 +40,7 @@ func (r *Registry) SetEnabled(name string, enabled bool) {
 	if r.disabled == nil {
 		r.disabled = make(map[string]bool)
 	}
-	r.disabled[name] = !enabled
+	r.disabled[strings.ToLower(name)] = !enabled
 }
 
 // IsEnabled returns whether CDN request monitoring is enabled for a service
@@ -53,55 +50,55 @@ func (r *Registry) IsEnabled(name string) bool {
 	if r.disabled == nil {
 		return true
 	}
-	return !r.disabled[name]
+	return !r.disabled[strings.ToLower(name)]
 }
 
-// Get finds a service by name
-func (r *Registry) Get(name string) (Service, bool) {
+// Get finds a platform adapter by ID or name
+func (r *Registry) Get(id string) (ports.PlatformAdapter, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	svc, ok := r.services[name]
-	return svc, ok
+	a, ok := r.adapters[strings.ToLower(id)]
+	return a, ok
 }
 
-// All returns all registered services
-func (r *Registry) All() []Service {
+// All returns all registered platform adapters
+func (r *Registry) All() []ports.PlatformAdapter {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	list := make([]Service, 0, len(r.services))
-	for _, s := range r.services {
-		list = append(list, s)
+	list := make([]ports.PlatformAdapter, 0, len(r.adapters))
+	for _, a := range r.adapters {
+		list = append(list, a)
 	}
 	return list
 }
 
-// Identify matches an incoming host header against registered services
-func (r *Registry) Identify(host string) Service {
+// Identify matches an incoming host header against registered platform adapters
+func (r *Registry) Identify(host string) ports.PlatformAdapter {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	cleaned := strings.Split(host, ":")[0] // Strip port if present
 
-	for _, svc := range r.services {
-		if r.disabled != nil && r.disabled[svc.Name()] {
+	for _, adapter := range r.adapters {
+		if r.disabled != nil && r.disabled[adapter.ID()] {
 			continue
 		}
-		if svc.MatchesHost(cleaned) {
-			return svc
+		if adapter.MatchesHost(cleaned) {
+			return adapter
 		}
 	}
 	return nil
 }
 
-// AllDomains returns an aggregated list of all active domain patterns across services
+// AllDomains returns an aggregated list of all active domain patterns across adapters
 func (r *Registry) AllDomains() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var domains []string
-	for _, svc := range r.services {
-		if r.disabled != nil && r.disabled[svc.Name()] {
+	for _, adapter := range r.adapters {
+		if r.disabled != nil && r.disabled[adapter.ID()] {
 			continue
 		}
-		domains = append(domains, svc.Domains()...)
+		domains = append(domains, adapter.Domains()...)
 	}
 	return domains
 }

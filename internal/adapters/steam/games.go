@@ -14,15 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// AccountGame represents an owned game resolved for an account
-type AccountGame struct {
-	AppID     int64    `json:"app_id"`
-	Service   string   `json:"service"`
-	Name      string   `json:"name"`
-	Platforms []string `json:"platforms"`
-}
+	"artesian/internal/ports"
+)
 
 type cachedPlatformMeta struct {
 	Name      string
@@ -71,41 +65,34 @@ type steamWebAPIOwnedGamesResp struct {
 	} `json:"response"`
 }
 
-type AccountGamesResult struct {
-	Games             []AccountGame `json:"games"`
-	TotalFound        int           `json:"total_found"`
-	PrivacyRestricted bool          `json:"privacy_restricted"`
-	Hint              string        `json:"hint,omitempty"`
-}
+// GetOwnedGames discovers and resolves games for the authenticated Steam user
+func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
+	a.authMu.RLock()
+	username := a.username
+	steamID64 := a.steamID
+	accessToken := a.accessToken
+	sessionCookies := a.sessionCookies
+	a.authMu.RUnlock()
 
-// FetchAccountGames discovers and resolves games for the authenticated Steam user
-func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
-	c.mu.RLock()
-	username := c.username
-	steamID64 := c.steamID
-	accessToken := c.accessToken
-	sessionCookies := c.sessionCookies
-	c.mu.RUnlock()
-
-	if (username == "" || steamID64 == "" || accessToken == "") && c.db != nil {
-		sess, err := c.db.GetSteamSession()
+	if (username == "" || steamID64 == "" || accessToken == "") && a.db != nil {
+		sess, err := a.db.GetAuthSession(a.ID())
 		if err == nil && sess != nil {
 			if username == "" {
 				username = sess.Username
 			}
 			if steamID64 == "" {
-				steamID64 = sess.SteamID
+				steamID64 = sess.AccountID
 			}
 			if accessToken == "" {
 				accessToken = sess.AccessToken
 			}
 			if sessionCookies == "" {
-				sessionCookies = sess.SessionCookies
+				sessionCookies = sess.SessionData
 			}
 		}
 	}
 	if username == "" {
-		return &AccountGamesResult{Games: []AccountGame{}}, fmt.Errorf("no connected Steam account found")
+		return &ports.AccountGamesResult{Games: []ports.AccountGame{}}, fmt.Errorf("no connected Steam account found")
 	}
 
 	httpClient := &http.Client{Timeout: 12 * time.Second}
@@ -127,11 +114,11 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 				if body, err := io.ReadAll(resp.Body); err == nil {
 					if err := xml.Unmarshal(body, &p); err == nil && p.SteamID64 != "" {
 						steamID64 = p.SteamID64
-						c.mu.Lock()
-						if c.steamID == "" {
-							c.steamID = p.SteamID64
+						a.authMu.Lock()
+						if a.steamID == "" {
+							a.steamID = p.SteamID64
 						}
-						c.mu.Unlock()
+						a.authMu.Unlock()
 					}
 				}
 			}
@@ -218,8 +205,8 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 	// 5. Developer Web API GetOwnedGames (if API key available)
 	if !fullLibraryLoaded {
 		apiKey := os.Getenv("STEAM_API_KEY")
-		if apiKey == "" && c.db != nil {
-			apiKey = c.db.GetSetting("steam_api_key", "")
+		if apiKey == "" && a.db != nil {
+			apiKey = a.db.GetSetting("steam_api_key", "")
 		}
 		if apiKey != "" && steamID64 != "" {
 			apiURL := fmt.Sprintf("https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=%s&steamid=%s&include_appinfo=1&include_played_free_games=1", apiKey, steamID64)
@@ -304,14 +291,14 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 	}
 
 	// 7. Check local database (depot_meta_cache, watched_apps, game_meta_cache)
-	if c.db != nil {
-		c.loadLocalSteamGames(discovered)
+	if a.db != nil {
+		a.loadLocalSteamGames(discovered)
 	}
 
 	// 8. Resolve Names & Platforms efficiently
 	var (
 		mu      sync.Mutex
-		results []AccountGame
+		results []ports.AccountGame
 		wg      sync.WaitGroup
 		sem     = make(chan struct{}, 8)
 	)
@@ -332,7 +319,7 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 			if n == "" {
 				n = name
 			}
-			results = append(results, AccountGame{
+			results = append(results, ports.AccountGame{
 				AppID:     appID,
 				Service:   "steam",
 				Name:      n,
@@ -342,15 +329,15 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 		}
 
 		// Check DB game_meta_cache
-		if c.db != nil {
-			dbName, dbPlatform, err := c.db.GetGameMeta(fmt.Sprintf("steam_%d", appID))
+		if a.db != nil {
+			dbName, dbPlatform, err := a.db.GetGameMeta(fmt.Sprintf("steam_%d", appID))
 			if err == nil && dbPlatform != "" {
 				platforms := parsePlatformsString(dbPlatform)
 				n := dbName
 				if n == "" {
 					n = name
 				}
-				results = append(results, AccountGame{
+				results = append(results, ports.AccountGame{
 					AppID:     appID,
 					Service:   "steam",
 					Name:      n,
@@ -367,7 +354,7 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 			if dispName == "" {
 				dispName = fmt.Sprintf("Steam App %d", appID)
 			}
-			results = append(results, AccountGame{
+			results = append(results, ports.AccountGame{
 				AppID:     appID,
 				Service:   "steam",
 				Name:      dispName,
@@ -383,7 +370,7 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			resolvedName, platforms := c.resolveAppPlatforms(id, currName, httpClient)
+			resolvedName, platforms := a.resolveAppPlatforms(id, currName, httpClient)
 			if resolvedName == "" {
 				resolvedName = fmt.Sprintf("Steam App %d", id)
 			}
@@ -392,7 +379,7 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 			}
 
 			mu.Lock()
-			results = append(results, AccountGame{
+			results = append(results, ports.AccountGame{
 				AppID:     id,
 				Service:   "steam",
 				Name:      resolvedName,
@@ -400,8 +387,8 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 			})
 			mu.Unlock()
 
-			if c.db != nil {
-				_ = c.db.UpsertGameMeta(
+			if a.db != nil {
+				_ = a.db.UpsertGameMeta(
 					fmt.Sprintf("steam_%d", id),
 					"steam",
 					id,
@@ -426,7 +413,7 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 	}
 
 	log.Printf("[Steam Games] Built dynamic game list for %s: found %d games (full_library: %v)", username, len(results), fullLibraryLoaded)
-	return &AccountGamesResult{
+	return &ports.AccountGamesResult{
 		Games:             results,
 		TotalFound:        len(results),
 		PrivacyRestricted: privacyRestricted,
@@ -435,11 +422,11 @@ func (c *Client) FetchAccountGames() (*AccountGamesResult, error) {
 }
 
 // ResolveAppPlatforms resolves game name and platform capabilities on demand
-func (c *Client) ResolveAppPlatforms(appID int64, currentName string) (string, []string) {
-	return c.resolveAppPlatforms(appID, currentName, c.httpClient)
+func (a *Adapter) ResolveAppPlatforms(appID int64, currentName string) (string, []string) {
+	return a.resolveAppPlatforms(appID, currentName, a.httpClient)
 }
 
-func (c *Client) resolveAppPlatforms(appID int64, currentName string, client *http.Client) (string, []string) {
+func (a *Adapter) resolveAppPlatforms(appID int64, currentName string, client *http.Client) (string, []string) {
 	// 1. Check in-memory cache
 	platformCacheMu.RLock()
 	cached, ok := platformCache[appID]
@@ -453,8 +440,8 @@ func (c *Client) resolveAppPlatforms(appID int64, currentName string, client *ht
 	}
 
 	// 2. Check DB game_meta_cache
-	if c.db != nil {
-		dbName, dbPlatform, err := c.db.GetGameMeta(fmt.Sprintf("steam_%d", appID))
+	if a.db != nil {
+		dbName, dbPlatform, err := a.db.GetGameMeta(fmt.Sprintf("steam_%d", appID))
 		if err == nil && dbPlatform != "" {
 			platforms := parsePlatformsString(dbPlatform)
 			name := dbName
@@ -547,13 +534,13 @@ func parsePlatformsString(s string) []string {
 	return res
 }
 
-func (c *Client) loadLocalSteamGames(discovered map[int64]string) {
-	if c.db == nil {
+func (a *Adapter) loadLocalSteamGames(discovered map[int64]string) {
+	if a.db == nil {
 		return
 	}
 
 	// Query depot_meta_cache
-	if rows, err := c.db.Query("SELECT DISTINCT app_id, game_title FROM depot_meta_cache WHERE service = 'steam' AND app_id > 0"); err == nil {
+	if rows, err := a.db.Query("SELECT DISTINCT app_id, game_title FROM depot_meta_cache WHERE service = 'steam' AND app_id > 0"); err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var appID int64
@@ -567,7 +554,7 @@ func (c *Client) loadLocalSteamGames(discovered map[int64]string) {
 	}
 
 	// Query watched_apps
-	if rows, err := c.db.Query("SELECT DISTINCT app_id, name FROM watched_apps WHERE service = 'steam' AND app_id > 0"); err == nil {
+	if rows, err := a.db.Query("SELECT DISTINCT app_id, name FROM watched_apps WHERE service = 'steam' AND app_id > 0"); err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var appID int64
@@ -581,7 +568,7 @@ func (c *Client) loadLocalSteamGames(discovered map[int64]string) {
 	}
 
 	// Query game_meta_cache
-	if rows, err := c.db.Query("SELECT DISTINCT app_id, name FROM game_meta_cache WHERE service = 'steam' AND app_id > 0"); err == nil {
+	if rows, err := a.db.Query("SELECT DISTINCT app_id, name FROM game_meta_cache WHERE service = 'steam' AND app_id > 0"); err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var appID int64
