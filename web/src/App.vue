@@ -1,9 +1,9 @@
 <template>
   <div class="artesian-layout">
     <!-- Sidebar Navigation -->
-    <AppSidebar 
-      :tabs="NAV_TABS" 
-      :current-tab="currentTab" 
+    <AppSidebar
+      :tabs="NAV_TABS"
+      :current-tab="currentTab"
       :ws-connected="wsConnected"
       @update:current-tab="currentTab = $event"
     />
@@ -13,17 +13,17 @@
       <AppHeader :title="currentTabTitle" />
 
       <!-- Tab Views -->
-      <StatsView 
-        v-if="currentTab === 'dashboard'" 
-        :stats="stats" 
-        :active-downloads="activeDownloads" 
+      <StatsView
+        v-if="currentTab === 'dashboard'"
+        :stats="stats"
+        :active-downloads="activeDownloads"
         :total-files-logged="totalFilesLogged"
         @clear-traffic="clearTraffic"
       />
 
-      <LibraryView 
-        v-if="currentTab === 'library'" 
-        :library="library" 
+      <LibraryView
+        v-if="currentTab === 'library'"
+        :library="library"
         :cached-games="cachedGames"
         :deleting-key="deletingGameKey"
         :rechecking-key="recheckingGameKey"
@@ -37,27 +37,27 @@
         @toggle-game-autoupdate="handleToggleGameAutoUpdate"
       />
 
-      <UpdatesView 
-        v-if="currentTab === 'automation'" 
-        :update-logs="updateLogs" 
-        :scheduler-rules="schedulerRules" 
+      <UpdatesView
+        v-if="currentTab === 'automation'"
+        :update-logs="updateLogs"
+        :scheduler-rules="schedulerRules"
         @check-updates="checkUpdatesNow"
         @save-rule="handleSaveSchedulerRule"
       />
 
-      <SettingsView 
-        v-if="currentTab === 'config'" 
-        v-model:dns-input="dnsInput" 
+      <SettingsView
+        v-if="currentTab === 'config'"
+        v-model:dns-input="dnsInput"
         v-model:intercept-ip-input="dnsInterceptIpInput"
-        v-model:storage-path-input="storagePathInput" 
+        v-model:storage-path-input="storagePathInput"
         v-model:max-storage-gb-input="maxStorageGbInput"
         @save-dns="saveDNSConfig"
         @save-storage="saveStorageConfig"
       />
 
-      <AccountsView 
-        v-if="currentTab === 'services'" 
-        :services-list="servicesList" 
+      <AccountsView
+        v-if="currentTab === 'services'"
+        :services-list="servicesList"
         @toggle-monitoring="toggleServiceMonitoring"
         @toggle-autoupdate="handleToggleServiceAutoUpdate"
         @open-login="handleOpenLoginModal"
@@ -70,18 +70,18 @@
     </main>
 
     <!-- Modal Dialogs -->
-    <PlatformLoginModal 
-      v-model="showLoginModal" 
+    <PlatformLoginModal
+      v-model="showLoginModal"
       :service="activeLoginService.id"
       :service-name="activeLoginService.display_name"
-      :loading="loggingIn" 
+      :loading="loggingIn"
       :error-msg="loginError"
       @submit="handlePlatformLogin"
     />
 
-    <Steam2FAModal 
-      v-model="show2FAModal" 
-      :username="steamStatus.username || loginUsername" 
+    <Steam2FAModal
+      v-model="show2FAModal"
+      :username="steamStatus.username || loginUsername"
       :loading="verifying2FA"
       :has-mobile-confirmation="steamStatus.has_mobile_confirmation ?? true"
       :has-email-code="steamStatus.has_email_code ?? false"
@@ -90,8 +90,8 @@
       @switch-account="handleRestartSteamLogin"
     />
 
-    <AddGameModal 
-      v-model="showAddGameModal" 
+    <AddGameModal
+      v-model="showAddGameModal"
       :services-list="servicesList"
       :steam-status="steamStatus"
       :existing-library="library"
@@ -99,9 +99,9 @@
       @switch-tab="currentTab = $event"
     />
 
-    <ConfirmDeleteModal 
-      v-model="showDeleteConfirmModal" 
-      :game="gameToDelete" 
+    <ConfirmDeleteModal
+      v-model="showDeleteConfirmModal"
+      :game="gameToDelete"
       :loading="deletingInProgress"
       @confirm="executeDeleteGame"
     />
@@ -139,7 +139,7 @@ import ConfirmDeleteModal from './components/modals/ConfirmDeleteModal.vue';
 // Navigation State
 const currentTab = ref('dashboard');
 const currentTabTitle = computed(() => {
-  const t = NAV_TABS.find(item => item.id === currentTab.value);
+  const t = NAV_TABS.find((item) => item.id === currentTab.value);
   return t ? t.label : 'Artesian';
 });
 
@@ -229,11 +229,11 @@ const { wsConnected } = useWebSocket({
     stats.value.total_requests++;
     if (data.is_hit) {
       stats.value.cache_hits++;
-      stats.value.bytes_saved += (data.bytes_transferred || 0);
+      stats.value.bytes_saved += data.bytes_transferred || 0;
     } else {
       stats.value.cache_misses++;
     }
-    stats.value.bytes_served += (data.bytes_transferred || 0);
+    stats.value.bytes_served += data.bytes_transferred || 0;
     if (stats.value.total_requests > 0) {
       stats.value.hit_ratio = (stats.value.cache_hits / stats.value.total_requests) * 100;
     }
@@ -259,7 +259,7 @@ const { wsConnected } = useWebSocket({
   },
   'steam:status': (data) => {
     steamStatus.value = data;
-    const stm = servicesList.value.find(s => s.id === 'steam');
+    const stm = servicesList.value.find((s) => s.id === 'steam');
     if (stm) {
       stm.status = data.state;
       stm.username = data.username;
@@ -294,33 +294,16 @@ const { wsConnected } = useWebSocket({
     if (data) {
       if (!steamStatus.value) steamStatus.value = {};
       if (data.username) steamStatus.value.username = data.username;
-      if (data.has_mobile_confirmation !== undefined) steamStatus.value.has_mobile_confirmation = data.has_mobile_confirmation;
+      if (data.has_mobile_confirmation !== undefined)
+        steamStatus.value.has_mobile_confirmation = data.has_mobile_confirmation;
       if (data.has_email_code !== undefined) steamStatus.value.has_email_code = data.has_email_code;
     }
-    const stm = servicesList.value.find(s => s.id === 'steam');
+    const stm = servicesList.value.find((s) => s.id === 'steam');
     if (stm) stm.status = 'awaiting_2fa';
-  },
-  'epic:status': (data) => {
-    const epc = servicesList.value.find(s => s.id === 'epic');
-    if (epc) {
-      epc.status = data.state;
-      epc.username = data.username;
-    }
-    if (data.state === 'connected') {
-      if (epc) epc.auto_update = true;
-      loggingIn.value = false;
-      showLoginModal.value = false;
-      loginError.value = '';
-      fetchLibrary();
-      fetchServices();
-    } else if (data.state === 'error') {
-      loggingIn.value = false;
-      loginError.value = data.error_message || 'Epic Games authentication failed';
-    }
   },
   'prefill:progress': (data) => {
     activePrefillJob.value = data;
-    const g = library.value.find(item => item.app_id === data.app_id);
+    const g = library.value.find((item) => item.app_id === data.app_id);
     if (g) {
       if (data.bytes_cached != null) {
         g.size_bytes = data.bytes_cached;
@@ -359,42 +342,42 @@ async function fetchServices() {
     if (data.services && data.services.length > 0) {
       servicesList.value = data.services;
     }
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchStats() {
   try {
     const data = await api.getStats();
     stats.value = data.stats;
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchSteamStatus() {
   try {
     steamStatus.value = await api.getSteamStatus();
-    const stm = servicesList.value.find(s => s.id === 'steam');
+    const stm = servicesList.value.find((s) => s.id === 'steam');
     if (stm) {
       stm.status = steamStatus.value.state;
       stm.username = steamStatus.value.username;
     }
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchLibrary() {
   try {
     library.value = await api.getLibrary();
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchCachedGames() {
   try {
     cachedGames.value = await api.getCachedGames();
-  } catch (e) {}
+  } catch {}
 }
 
 async function handleAddCachedGame(game) {
   try {
-    const svcObj = servicesList.value.find(s => s.id === (game.service || 'steam'));
+    const svcObj = servicesList.value.find((s) => s.id === (game.service || 'steam'));
     const defaultAutoUpdate = svcObj?.auto_update ?? true;
     await api.addGame({
       appId: game.app_id,
@@ -453,7 +436,7 @@ async function fetchScheduler() {
   try {
     const data = await api.getSchedulerRules();
     schedulerRules.value = data.rules;
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchUpdateLogs() {
@@ -462,7 +445,7 @@ async function fetchUpdateLogs() {
     if (data.logs) {
       updateLogs.value = data.logs;
     }
-  } catch (e) {}
+  } catch {}
 }
 
 async function fetchConfig() {
@@ -481,7 +464,7 @@ async function fetchConfig() {
     if (stData.max_size_bytes) {
       maxStorageGbInput.value = Math.round(stData.max_size_bytes / (1024 * 1024 * 1024));
     }
-  } catch (e) {}
+  } catch {}
 }
 
 function handleOpenLoginModal(svc) {
@@ -490,9 +473,9 @@ function handleOpenLoginModal(svc) {
   loginError.value = '';
   loggingIn.value = false;
 
-  const isSteamAwaiting2FA = serviceObj.id === 'steam' && (
-    steamStatus.value?.state === 'awaiting_2fa' || serviceObj.status === 'awaiting_2fa'
-  );
+  const isSteamAwaiting2FA =
+    serviceObj.id === 'steam' &&
+    (steamStatus.value?.state === 'awaiting_2fa' || serviceObj.status === 'awaiting_2fa');
 
   if (isSteamAwaiting2FA) {
     showLoginModal.value = false;
@@ -509,7 +492,10 @@ function openSteam2FAModal() {
 
 function handleRestartSteamLogin() {
   show2FAModal.value = false;
-  activeLoginService.value = servicesList.value.find(s => s.id === 'steam') || { id: 'steam', display_name: 'Steam' };
+  activeLoginService.value = servicesList.value.find((s) => s.id === 'steam') || {
+    id: 'steam',
+    display_name: 'Steam',
+  };
   loginError.value = '';
   loggingIn.value = false;
   showLoginModal.value = true;
@@ -526,7 +512,7 @@ async function handlePlatformLogin(payload) {
     try {
       const data = await api.steamLogin(payload.username, payload.password);
       steamStatus.value = data.status;
-      const stm = servicesList.value.find(s => s.id === 'steam');
+      const stm = servicesList.value.find((s) => s.id === 'steam');
       if (stm) {
         stm.status = data.status.state;
         stm.username = data.status.username;
@@ -590,33 +576,6 @@ async function handlePlatformLogin(payload) {
       loggingIn.value = false;
       loginError.value = err.message || 'Failed to authenticate with Steam';
     }
-  } else if (service === 'epic') {
-    try {
-      const res = await api.login('epic', payload.code, '');
-      const epc = servicesList.value.find(s => s.id === 'epic');
-      if (epc && res.status) {
-        epc.status = res.status.state;
-        epc.username = res.status.username;
-      }
-      if (res.status?.state === 'connected') {
-        if (epc) epc.auto_update = true;
-        showLoginModal.value = false;
-        loggingIn.value = false;
-        await fetchServices();
-        await fetchLibrary();
-      } else if (res.status?.state === 'error') {
-        loggingIn.value = false;
-        loginError.value = res.status.error_message || 'Failed to authenticate with Epic Games';
-      } else {
-        loggingIn.value = false;
-        if (res.status?.state) {
-          loginError.value = res.status.error_message || `Authentication status: ${res.status.state}`;
-        }
-      }
-    } catch (err) {
-      loggingIn.value = false;
-      loginError.value = err.message || 'Failed to authenticate with Epic Games';
-    }
   }
 }
 
@@ -625,7 +584,7 @@ async function submit2FACode(code) {
   try {
     await api.submitSteam2FA(code);
     show2FAModal.value = false;
-    const stm = servicesList.value.find(s => s.id === 'steam');
+    const stm = servicesList.value.find((s) => s.id === 'steam');
     if (stm) stm.auto_update = true;
     await fetchSteamStatus();
     await fetchServices();
@@ -656,7 +615,7 @@ async function triggerPrefill(game) {
       name: game.name,
       service: game.service || 'steam',
     });
-  } catch (e) {}
+  } catch {}
 }
 
 async function handleRecheckGame(game) {
@@ -702,7 +661,10 @@ async function checkUpdatesNow() {
 }
 
 async function saveDNSConfig() {
-  const parts = dnsInput.value.split(',').map(s => s.trim()).filter(Boolean);
+  const parts = dnsInput.value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   await api.saveDNSConfig(parts, dnsInterceptIpInput.value.trim());
   alert('Upstream DNS & Interception IP settings saved to database.');
 }
@@ -728,10 +690,24 @@ function openAddGameModal() {
   showAddGameModal.value = true;
 }
 
-async function saveNewGame({ appId, name, service = 'steam', platform = '', replacePlatforms = false, autoUpdate }) {
-  const svcObj = servicesList.value.find(s => s.id === service);
+async function saveNewGame({
+  appId,
+  name,
+  service = 'steam',
+  platform = '',
+  replacePlatforms = false,
+  autoUpdate,
+}) {
+  const svcObj = servicesList.value.find((s) => s.id === service);
   const effectiveAutoUpdate = autoUpdate !== undefined ? autoUpdate : (svcObj?.auto_update ?? true);
-  await api.addGame({ appId, name, service, platform, autoUpdate: effectiveAutoUpdate, replacePlatforms });
+  await api.addGame({
+    appId,
+    name,
+    service,
+    platform,
+    autoUpdate: effectiveAutoUpdate,
+    replacePlatforms,
+  });
   showAddGameModal.value = false;
   fetchLibrary();
   fetchCachedGames();

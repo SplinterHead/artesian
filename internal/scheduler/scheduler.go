@@ -204,9 +204,6 @@ func (s *Scheduler) checkAppUpdate(app db.WatchedApp) {
 	}
 
 	svcPrefix := adapter.DisplayName()
-	if adapter.ID() == "epic" {
-		svcPrefix = "Epic"
-	}
 
 	check, err := adapter.CheckAppUpdate(app.AppID, app.ChangeNumber)
 	if err != nil {
@@ -272,7 +269,6 @@ func (s *Scheduler) checkAppUpdate(app db.WatchedApp) {
 		}()
 	}
 }
-
 
 // GetRules returns all configured scheduler rules
 func (s *Scheduler) GetRules() []*Rule {

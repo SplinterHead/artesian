@@ -4,8 +4,12 @@
     <div class="stats-grid">
       <div class="stat-card">
         <span class="stat-label">Cache Hit Ratio</span>
-        <div class="stat-value text-accent">{{ stats.hit_ratio ? stats.hit_ratio.toFixed(1) : 0 }}%</div>
-        <span class="stat-sub">{{ stats.cache_hits }} hits / {{ stats.total_requests }} requests</span>
+        <div class="stat-value text-accent">
+          {{ stats.hit_ratio ? stats.hit_ratio.toFixed(1) : 0 }}%
+        </div>
+        <span class="stat-sub"
+          >{{ stats.cache_hits }} hits / {{ stats.total_requests }} requests</span
+        >
       </div>
 
       <div class="stat-card">
@@ -54,26 +58,40 @@
                 Listening on :80. Traffic from game clients will bundle here in real time...
               </td>
             </tr>
-            <tr v-for="d in activeDownloads" :key="d.key || (d.client_ip + d.store + d.game_title)" class="traffic-row">
-              <td class="col-time text-muted" :title="'Initial chunk: ' + (d.first_seen ? new Date(d.first_seen).toLocaleString() : (d.timestamp || d.time))">
+            <tr
+              v-for="d in activeDownloads"
+              :key="d.key || d.client_ip + d.store + d.game_title"
+              class="traffic-row"
+            >
+              <td
+                class="col-time text-muted"
+                :title="
+                  'Initial chunk: ' +
+                  (d.first_seen ? new Date(d.first_seen).toLocaleString() : d.timestamp || d.time)
+                "
+              >
                 <code>{{ d.timestamp || d.time }}</code>
               </td>
               <td class="col-client">
-                <span v-if="cleanClientIP(d.client_ip) === 'Artesian'" class="client-badge-artesian" title="Internal Artesian Depot Caching Engine">
+                <span
+                  v-if="cleanClientIP(d.client_ip) === 'Artesian'"
+                  class="client-badge-artesian"
+                  title="Internal Artesian Depot Caching Engine"
+                >
                   <i class="fa-solid fa-server mr-1"></i> Artesian
                 </span>
                 <code v-else class="ip-code">{{ cleanClientIP(d.client_ip) }}</code>
               </td>
               <td class="col-store">
-                <div 
-                  class="store-logo-box" 
+                <div
+                  class="store-logo-box"
                   :class="'store-logo-' + (getLogoKey(d.service, d.store) || 'generic')"
                   :title="d.store || formatStore(d.service)"
                 >
-                  <svg 
-                    v-if="platformLogos[getLogoKey(d.service, d.store)]" 
-                    class="store-svg-logo" 
-                    :viewBox="platformLogos[getLogoKey(d.service, d.store)].viewBox" 
+                  <svg
+                    v-if="platformLogos[getLogoKey(d.service, d.store)]"
+                    class="store-svg-logo"
+                    :viewBox="platformLogos[getLogoKey(d.service, d.store)].viewBox"
                     fill="currentColor"
                   >
                     <path :d="platformLogos[getLogoKey(d.service, d.store)].path" />
@@ -85,10 +103,10 @@
                 <div class="game-cell">
                   <strong class="game-title">{{ d.game_title || 'Game Asset' }}</strong>
                   <span v-if="d.platform" class="platform-tags-wrap">
-                    <span 
-                      v-for="p in getPlatformList(d.platform)" 
-                      :key="p" 
-                      class="platform-tag" 
+                    <span
+                      v-for="p in getPlatformList(d.platform)"
+                      :key="p"
+                      class="platform-tag"
                       :title="p"
                     >
                       <i :class="getPlatformIcon(p)"></i>
@@ -98,20 +116,13 @@
               </td>
               <td class="col-depot">
                 <div class="depots-container">
-                  <!-- Epic Games: Show depot/app ID badge without SteamDB link -->
-                  <template v-if="(d.service || '').toLowerCase() === 'epic'">
-                    <span v-if="d.depot_id" class="depot-link">
-                      <code>{{ d.depot_id }}</code>
-                    </span>
-                    <span v-else class="text-muted">—</span>
-                  </template>
                   <!-- Steam Depots: All depots for this game bundled as clickable badges -->
-                  <template v-else-if="d.depot_links && d.depot_links.length > 0">
-                    <a 
-                      v-for="link in d.depot_links" 
+                  <template v-if="d.depot_links && d.depot_links.length > 0">
+                    <a
+                      v-for="link in d.depot_links"
                       :key="link.depot_id"
-                      :href="link.lookup_url || ('https://steamdb.info/depot/' + link.depot_id)" 
-                      target="_blank" 
+                      :href="link.lookup_url || 'https://steamdb.info/depot/' + link.depot_id"
+                      target="_blank"
                       rel="noopener noreferrer"
                       class="depot-link steamdb-link"
                       :title="'View Depot ' + link.depot_id + ' on SteamDB'"
@@ -120,10 +131,10 @@
                       <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i>
                     </a>
                   </template>
-                  <a 
-                    v-else-if="d.depot_id" 
-                    :href="d.lookup_url || ('https://steamdb.info/depot/' + d.depot_id)" 
-                    target="_blank" 
+                  <a
+                    v-else-if="d.depot_id"
+                    :href="d.lookup_url || 'https://steamdb.info/depot/' + d.depot_id"
+                    target="_blank"
                     rel="noopener noreferrer"
                     class="depot-link steamdb-link"
                     :title="'View Depot ' + d.depot_id + ' on SteamDB'"
@@ -139,28 +150,42 @@
                   <div class="size-progress-wrap">
                     <div class="size-header-row">
                       <span class="depot-size">
-                        <template v-if="d.total_depot_size && d.bytes_transferred < d.total_depot_size">
-                          {{ formatBytes(d.bytes_transferred) }} / {{ formatBytes(d.total_depot_size) }}
+                        <template
+                          v-if="d.total_depot_size && d.bytes_transferred < d.total_depot_size"
+                        >
+                          {{ formatBytes(d.bytes_transferred) }} /
+                          {{ formatBytes(d.total_depot_size) }}
                         </template>
                         <template v-else>
                           {{ formatBytes(d.total_depot_size || d.bytes_transferred || 0) }}
                         </template>
                       </span>
-                      <span 
-                        v-if="d.total_depot_size && d.total_depot_size > 0" 
-                        class="pct-badge" 
+                      <span
+                        v-if="d.total_depot_size && d.total_depot_size > 0"
+                        class="pct-badge"
                         :class="{ 'pct-done': d.bytes_transferred >= d.total_depot_size }"
                       >
-                        {{ Math.min(100, Math.round((d.bytes_transferred / d.total_depot_size) * 100)) }}%
+                        {{
+                          Math.min(
+                            100,
+                            Math.round((d.bytes_transferred / d.total_depot_size) * 100)
+                          )
+                        }}%
                       </span>
                       <span v-else-if="d.chunk_count && d.chunk_count > 1" class="chunk-badge">
                         {{ d.chunk_count }} files
                       </span>
                     </div>
-                    <div v-if="d.total_depot_size && d.total_depot_size > 0" class="download-mini-progress">
-                      <div 
-                        class="download-mini-progress-fill" 
-                        :style="{ width: Math.min(100, (d.bytes_transferred / d.total_depot_size) * 100) + '%' }"
+                    <div
+                      v-if="d.total_depot_size && d.total_depot_size > 0"
+                      class="download-mini-progress"
+                    >
+                      <div
+                        class="download-mini-progress-fill"
+                        :style="{
+                          width:
+                            Math.min(100, (d.bytes_transferred / d.total_depot_size) * 100) + '%',
+                        }"
                       ></div>
                     </div>
                   </div>
@@ -175,15 +200,14 @@
 </template>
 
 <script setup>
-import { 
-  formatBytes, 
-  formatSpeed, 
-  cleanClientIP, 
-  formatChunkID, 
-  formatStore, 
-  getLogoKey, 
+import {
+  formatBytes,
+  formatSpeed,
+  cleanClientIP,
+  formatStore,
+  getLogoKey,
   getPlatformIcon,
-  getPlatformList 
+  getPlatformList,
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -280,19 +304,6 @@ defineEmits(['clear-traffic']);
 .store-logo-steam:hover {
   border-color: rgba(102, 192, 244, 0.7);
   box-shadow: 0 4px 14px rgba(102, 192, 244, 0.35);
-  color: #ffffff;
-}
-
-.store-logo-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(20, 20, 20, 0.85));
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
-}
-
-.store-logo-epic:hover {
-  border-color: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.3);
   color: #ffffff;
 }
 
@@ -491,4 +502,3 @@ defineEmits(['clear-traffic']);
   transition: width 0.2s ease-out;
 }
 </style>
-

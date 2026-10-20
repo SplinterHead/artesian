@@ -6,7 +6,7 @@ COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up start down stop restart build run logs ps status pull clean clean-data wipe-data reset
+.PHONY: help up start down stop restart build run logs ps status pull clean clean-data wipe-data reset format format-go format-node lint lint-go lint-node check
 
 ## ----------------------------------------------------------------------
 ## Help
@@ -69,4 +69,42 @@ clean-data: ## Wipe all local cached game content and database state
 wipe-data: clean-data ## Alias for clean-data
 
 reset: clean-data run ## Wipe local data and restart the stack fresh
+ 
+## ----------------------------------------------------------------------
+## Code Quality & Formatting Targets
+## ----------------------------------------------------------------------
+format: format-go format-node ## Format all Go and Node/Vue code
+
+format-go: ## Format Go source code using gofmt
+	@echo "Formatting Go source files..."
+	@if command -v gofmt >/dev/null 2>&1; then \
+		gofmt -s -w cmd internal; \
+	else \
+		docker run --rm -v "$$(pwd)":/build -w /build golang:1.24-alpine gofmt -s -w cmd internal; \
+	fi
+	@echo "✓ Go formatting complete."
+
+format-node: ## Format Node/Vue source code using Prettier
+	@echo "Formatting Node/Vue source files..."
+	@cd web && npm run format
+	@echo "✓ Node/Vue formatting complete."
+
+lint: lint-go lint-node ## Lint all Go and Node/Vue code
+
+lint-go: ## Lint Go packages using go vet
+	@echo "Linting Go source files..."
+	@if command -v go >/dev/null 2>&1; then \
+		go vet ./cmd/... ./internal/...; \
+	else \
+		docker run --rm -v "$$(pwd)":/build -w /build golang:1.24-alpine go vet ./cmd/... ./internal/...; \
+	fi
+	@echo "✓ Go linting passed."
+
+lint-node: ## Lint Node/Vue source code using ESLint
+	@echo "Linting Node/Vue source files..."
+	@cd web && npm run lint
+	@echo "✓ Node/Vue linting passed."
+
+check: lint ## Run code quality and linting checks across all code
+
 

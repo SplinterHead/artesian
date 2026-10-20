@@ -324,4 +324,3 @@ func DeleteManifestFiles(storageDir string, depotID int64) error {
 	}
 	return nil
 }
-

@@ -28,7 +28,9 @@ export function formatETA(secs) {
 export function formatDate(dt) {
   if (!dt) return 'Never';
   const d = new Date(dt);
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return (
+    d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  );
 }
 
 export function cleanClientIP(ip) {
@@ -57,7 +59,6 @@ export function formatChunkID(id) {
 export function formatStore(service) {
   const s = (service || '').toLowerCase();
   if (s === 'steam') return 'Steam';
-  if (s === 'epic') return 'Epic Games';
   return service ? service.toUpperCase() : 'Steam';
 }
 
@@ -66,7 +67,6 @@ export function getLogoKey(service, store) {
   if (platformLogos[s]) return s;
   const st = (store || '').toLowerCase();
   if (st.includes('steam')) return 'steam';
-  if (st.includes('epic')) return 'epic';
   return 'steam';
 }
 
@@ -89,7 +89,6 @@ export function getPlatformList(platform) {
   if (Array.isArray(platform)) return platform;
   return String(platform)
     .split(',')
-    .map(p => p.trim())
+    .map((p) => p.trim())
     .filter(Boolean);
 }
-

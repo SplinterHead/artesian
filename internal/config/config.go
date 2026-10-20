@@ -25,7 +25,7 @@ type ServerConfig struct {
 type DNSConfig struct {
 	Enabled       bool     `json:"enabled"`
 	ListenAddr    string   `json:"listen_addr"`    // e.g. ":53"
-	UpstreamDNS   []string `json:"upstream_dns"`  // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
+	UpstreamDNS   []string `json:"upstream_dns"`   // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
 	InterceptIPv4 string   `json:"intercept_ipv4"` // Target proxy IP address
 }
 
@@ -39,8 +39,8 @@ type ProxyConfig struct {
 
 // CacheConfig controls disk storage, chunk layout, and retention
 type CacheConfig struct {
-	StorageDir    string `json:"storage_dir"`       // e.g. "/data/cache"
-	ManifestDir   string `json:"manifest_dir"`     // e.g. "/data/manifests"
+	StorageDir    string `json:"storage_dir"`    // e.g. "/data/cache"
+	ManifestDir   string `json:"manifest_dir"`   // e.g. "/data/manifests"
 	DepotCacheDir string `json:"depotcache_dir"` // e.g. "/data/steam_depotcache"
 	MaxSizeBytes  int64  `json:"max_size_bytes"`
 	MinFreeDisk   int64  `json:"min_free_disk_bytes"`

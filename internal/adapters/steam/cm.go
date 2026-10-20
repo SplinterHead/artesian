@@ -126,15 +126,15 @@ func (c *CMClient) logon(ctx context.Context, username, refreshToken string) err
 	// Build CMsgProtoBufHeader
 	var hdr []byte
 	hdr = append(hdr, encodeFixed64(1, c.steamID)...)
-	hdr = append(hdr, encodeUint32(2, 0)...)            // client_sessionid = 0
-	hdr = append(hdr, encodeFixed64(10, jobID)...)     // jobid_source
+	hdr = append(hdr, encodeUint32(2, 0)...)       // client_sessionid = 0
+	hdr = append(hdr, encodeFixed64(10, jobID)...) // jobid_source
 
 	// Build CMsgClientLogon body
 	var body []byte
-	body = append(body, encodeUint32(1, 65580)...)              // protocol_version
-	body = append(body, encodeString(50, username)...)          // account_name
-	body = append(body, encodeString(108, refreshToken)...)     // access_token (JWT refresh token)
-	body = append(body, encodeUint32(6, 1)...)                  // should_remember_password = 1
+	body = append(body, encodeUint32(1, 65580)...)          // protocol_version
+	body = append(body, encodeString(50, username)...)      // account_name
+	body = append(body, encodeString(108, refreshToken)...) // access_token (JWT refresh token)
+	body = append(body, encodeUint32(6, 1)...)              // should_remember_password = 1
 
 	packet := buildPacket(EMsgClientLogon, hdr, body)
 	if err := c.conn.WriteMessage(websocket.BinaryMessage, packet); err != nil {

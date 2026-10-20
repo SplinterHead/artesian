@@ -10,7 +10,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-
 // DB wraps standard sql.DB with Artesian helper methods
 type DB struct {
 	*sql.DB
@@ -89,7 +88,6 @@ type ManifestChunkRecord struct {
 	OriginalSize   int64  `json:"original_size"`
 	CompressedSize int64  `json:"compressed_size"`
 }
-
 
 // AuthSession represents authenticated platform credentials
 type AuthSession struct {
@@ -295,21 +293,20 @@ func (db *DB) SetSetting(key, val string) error {
 func (db *DB) seedDefaults() error {
 	// 1. Seed default configuration settings if absent
 	defaultSettings := map[string]string{
-		"dns_upstreams":        "1.1.1.1:53,8.8.8.8:53",
-		"dns_listen_addr":      ":53",
-		"dns_enabled":          "true",
-		"dns_intercept_ipv4":   "127.0.0.1",
-		"storage_path":         "/data/cache",
-		"manifest_dir":         "/data/manifests",
-		"depotcache_dir":       "/data/steam_depotcache",
-		"server_listen_addr":   ":8080",
-		"proxy_listen_addr":    ":80",
-		"cache_max_size_bytes": "2199023255552", // 2 TB
-		"cache_min_free_disk":  "53687091200",   // 50 GB
-		"cache_chunk_size":             "1048576",       // 1 MB
-		"scheduler_enabled":            "true",
-		"service_steam_auto_update":    "true",
-		"service_epic_auto_update":     "true",
+		"dns_upstreams":             "1.1.1.1:53,8.8.8.8:53",
+		"dns_listen_addr":           ":53",
+		"dns_enabled":               "true",
+		"dns_intercept_ipv4":        "127.0.0.1",
+		"storage_path":              "/data/cache",
+		"manifest_dir":              "/data/manifests",
+		"depotcache_dir":            "/data/steam_depotcache",
+		"server_listen_addr":        ":8080",
+		"proxy_listen_addr":         ":80",
+		"cache_max_size_bytes":      "2199023255552", // 2 TB
+		"cache_min_free_disk":       "53687091200",   // 50 GB
+		"cache_chunk_size":          "1048576",       // 1 MB
+		"scheduler_enabled":         "true",
+		"service_steam_auto_update": "true",
 	}
 
 	for k, v := range defaultSettings {
@@ -644,15 +641,15 @@ func (db *DB) GetWatchedApps() ([]WatchedApp, error) {
 	for rows.Next() {
 		var a WatchedApp
 		if err := rows.Scan(
-			&a.AppID, 
-			&a.Service, 
-			&a.Name, 
-			&a.Platform, 
-			&a.AutoUpdate, 
-			&a.CurrentVersion, 
-			&a.ChangeNumber, 
-			&a.Status, 
-			&a.InstalledAt, 
+			&a.AppID,
+			&a.Service,
+			&a.Name,
+			&a.Platform,
+			&a.AutoUpdate,
+			&a.CurrentVersion,
+			&a.ChangeNumber,
+			&a.Status,
+			&a.InstalledAt,
 			&a.LastChecked,
 			&a.SizeBytes,
 		); err == nil {
@@ -893,7 +890,7 @@ func (db *DB) GetInterceptedGames() ([]InterceptedGame, error) {
 			(SELECT g.name FROM game_meta_cache g WHERE g.service = sub.service AND g.app_id = sub.app_id AND g.name != '' LIMIT 1),
 			(SELECT d2.game_title FROM depot_meta_cache d2 WHERE d2.depot_id = sub.sample_depot AND d2.game_title != '' LIMIT 1),
 			(SELECT g2.name FROM game_meta_cache g2 WHERE g2.service = sub.service AND g2.name != '' LIMIT 1),
-			CASE WHEN sub.service = 'steam' AND sub.app_id > 0 THEN 'Steam App ' || sub.app_id WHEN sub.service = 'epic' AND sub.app_id > 0 THEN 'Epic Game ' || sub.app_id ELSE 'Game Asset' END
+			CASE WHEN sub.service = 'steam' AND sub.app_id > 0 THEN 'Steam App ' || sub.app_id ELSE 'Game Asset' END
 		) as name,
 		COALESCE(
 			(SELECT d.platform FROM depot_meta_cache d WHERE d.depot_id IN (SELECT c2.depot_id FROM chunk_cache c2 WHERE c2.app_id = sub.app_id OR c2.depot_id = sub.sample_depot) AND d.platform != '' LIMIT 1),
@@ -1227,5 +1224,3 @@ func MergePlatformStrings(existing, newPlat string) string {
 	}
 	return strings.Join(result, ", ")
 }
-
-

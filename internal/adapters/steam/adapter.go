@@ -17,31 +17,31 @@ import (
 
 // Adapter implements ports.SteamPort providing all Steam subsystem capabilities
 type Adapter struct {
-	db             *db.DB
-	storage        *cache.Storage
-	dnsCfg         *config.DNSConfig
-	httpClient     *http.Client
-	cdnHTTPClient  *http.Client
-	domains        []string
+	db            *db.DB
+	storage       *cache.Storage
+	dnsCfg        *config.DNSConfig
+	httpClient    *http.Client
+	cdnHTTPClient *http.Client
+	domains       []string
 
 	// Auth state
-	state                  ports.AuthState
-	username               string
-	password               string
-	clientID               string
-	requestID              string
-	steamID                string
-	accessToken            string
-	refreshToken           string
-	sessionCookies         string
-	confirmationType       int
+	state                 ports.AuthState
+	username              string
+	password              string
+	clientID              string
+	requestID             string
+	steamID               string
+	accessToken           string
+	refreshToken          string
+	sessionCookies        string
+	confirmationType      int
 	hasMobileConfirmation bool
 	hasDeviceCode         bool
 	hasEmailCode          bool
 	associatedMsg         string
-	cancelPoll             context.CancelFunc
-	errorMessage           string
-	authMu                 sync.RWMutex
+	cancelPoll            context.CancelFunc
+	errorMessage          string
+	authMu                sync.RWMutex
 
 	// Metadata and platform caches
 	depotInfoCache   map[int64]*ports.DepotInfo
@@ -126,11 +126,11 @@ func NewAdapter(database *db.DB, storage *cache.Storage, dnsCfg *config.DNSConfi
 	}
 
 	adapter := &Adapter{
-		db:             database,
-		storage:        storage,
-		dnsCfg:         dnsCfg,
-		httpClient:     baseHTTPClient,
-		cdnHTTPClient:  cdnClient,
+		db:            database,
+		storage:       storage,
+		dnsCfg:        dnsCfg,
+		httpClient:    baseHTTPClient,
+		cdnHTTPClient: cdnClient,
 		domains: []string{
 			"*.cs.steampowered.com",
 			"*.content.steampowered.com",

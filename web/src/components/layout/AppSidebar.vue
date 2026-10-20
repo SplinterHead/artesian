@@ -9,8 +9,8 @@
     </div>
 
     <nav class="nav-menu">
-      <button 
-        v-for="tab in tabs" 
+      <button
+        v-for="tab in tabs"
         :key="tab.id"
         :class="['nav-item', { active: currentTab === tab.id }]"
         @click="$emit('update:currentTab', tab.id)"

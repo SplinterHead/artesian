@@ -1,7 +1,7 @@
 <template>
-  <BaseModal 
-    :model-value="modelValue" 
-    title="Add Game to Library" 
+  <BaseModal
+    :model-value="modelValue"
+    title="Add Game to Library"
     @update:model-value="handleCancel"
   >
     <!-- Scenario A: No Connected Accounts -->
@@ -27,10 +27,10 @@
         <div v-if="authenticatedServices.length === 1" class="single-store-header">
           <div class="store-badge-single selected">
             <div class="store-logo-wrapper" :class="'store-bg-' + authenticatedServices[0].id">
-              <svg 
-                v-if="platformLogos[authenticatedServices[0].id]" 
-                class="store-svg" 
-                :viewBox="platformLogos[authenticatedServices[0].id].viewBox" 
+              <svg
+                v-if="platformLogos[authenticatedServices[0].id]"
+                class="store-svg"
+                :viewBox="platformLogos[authenticatedServices[0].id].viewBox"
                 fill="currentColor"
               >
                 <path :d="platformLogos[authenticatedServices[0].id].path" />
@@ -41,7 +41,9 @@
               <span class="store-title">{{ authenticatedServices[0].display_name }}</span>
               <span class="store-sub">
                 <i class="fa-solid fa-circle-check text-green mr-1"></i> Connected
-                <span v-if="authenticatedServices[0]?.username" class="store-user">({{ authenticatedServices[0].username }})</span>
+                <span v-if="authenticatedServices[0]?.username" class="store-user"
+                  >({{ authenticatedServices[0].username }})</span
+                >
               </span>
             </div>
             <span class="badge badge-hit ml-auto">SELECTED</span>
@@ -49,8 +51,8 @@
         </div>
 
         <div v-else class="store-tabs-grid">
-          <button 
-            v-for="svc in authenticatedServices" 
+          <button
+            v-for="svc in authenticatedServices"
             :key="svc.id"
             type="button"
             class="store-tab-btn"
@@ -58,10 +60,10 @@
             @click="switchStore(svc.id)"
           >
             <div class="store-tab-icon" :class="'store-bg-' + svc.id">
-              <svg 
-                v-if="platformLogos[svc.id]" 
-                class="store-svg" 
-                :viewBox="platformLogos[svc.id].viewBox" 
+              <svg
+                v-if="platformLogos[svc.id]"
+                class="store-svg"
+                :viewBox="platformLogos[svc.id].viewBox"
                 fill="currentColor"
               >
                 <path :d="platformLogos[svc.id].path" />
@@ -69,7 +71,10 @@
               <i v-else class="fa-solid fa-gamepad"></i>
             </div>
             <span class="store-tab-name">{{ svc.display_name }}</span>
-            <i v-if="selectedServiceId === svc.id" class="fa-solid fa-circle-check store-active-indicator"></i>
+            <i
+              v-if="selectedServiceId === svc.id"
+              class="fa-solid fa-circle-check store-active-indicator"
+            ></i>
           </button>
         </div>
       </div>
@@ -95,27 +100,32 @@
           <span v-else-if="availableGames.length > 0" class="text-xs text-muted">
             {{ availableGames.length }} available
           </span>
-          <span v-else class="text-xs text-muted">
-            0 available
-          </span>
+          <span v-else class="text-xs text-muted"> 0 available </span>
         </div>
 
         <div class="select-wrapper">
-          <select 
+          <select
             id="game-select"
-            class="form-control custom-select" 
+            class="form-control custom-select"
             v-model="selectedGameAppId"
             :disabled="loadingGames || availableGames.length === 0"
           >
             <option value="" disabled>
-              {{ loadingGames ? 'Fetching live games from store...' : (availableGames.length === 0 ? 'No games found on connected account' : 'Please select a game to add') }}
+              {{
+                loadingGames
+                  ? 'Fetching live games from store...'
+                  : availableGames.length === 0
+                    ? 'No games found on connected account'
+                    : 'Please select a game to add'
+              }}
             </option>
-            <option 
-              v-for="game in availableGames" 
-              :key="game.app_id" 
-              :value="game.app_id"
-            >
-              {{ game.name }}{{ getExistingGameInfo(game.app_id) ? ` • In Library (${getExistingGameInfo(game.app_id).platform})` : '' }}
+            <option v-for="game in availableGames" :key="game.app_id" :value="game.app_id">
+              {{ game.name
+              }}{{
+                getExistingGameInfo(game.app_id)
+                  ? ` • In Library (${getExistingGameInfo(game.app_id).platform})`
+                  : ''
+              }}
             </option>
           </select>
         </div>
@@ -128,8 +138,11 @@
         <div v-if="existingInLibrary" class="existing-library-notice mt-2">
           <i class="fa-solid fa-circle-check text-green mr-1"></i>
           <span>
-            Already in library for <strong>{{ existingInLibrary.platform }}</strong>.
-            <template v-if="isMultiPlatform"> Select additional platforms to cache them together.</template>
+            Already in library for <strong>{{ existingInLibrary.platform }}</strong
+            >.
+            <template v-if="isMultiPlatform">
+              Select additional platforms to cache them together.</template
+            >
           </span>
         </div>
       </div>
@@ -166,10 +179,13 @@
 
         <!-- State 3: Game Selected, Multiple Platforms -> Interactive Multi-Select Dropdown -->
         <div v-else-if="isMultiPlatform" class="multi-select-container" ref="dropdownRef">
-          <button 
-            type="button" 
+          <button
+            type="button"
             class="multi-select-trigger form-control"
-            :class="{ 'is-open': isPlatformDropdownOpen, 'has-selection': selectedPlatforms.length > 0 }"
+            :class="{
+              'is-open': isPlatformDropdownOpen,
+              'has-selection': selectedPlatforms.length > 0,
+            }"
             @click="isPlatformDropdownOpen = !isPlatformDropdownOpen"
           >
             <div class="trigger-content">
@@ -177,34 +193,35 @@
                 Please select the platform(s) for this game
               </span>
               <div v-else class="selected-pills-row">
-                <span 
-                  v-for="p in selectedPlatforms" 
-                  :key="p" 
-                  class="platform-pill"
-                >
+                <span v-for="p in selectedPlatforms" :key="p" class="platform-pill">
                   <i :class="getPlatformIcon(p)" class="mr-1"></i>
                   {{ p }}
                 </span>
               </div>
             </div>
-            <i class="fa-solid fa-chevron-down trigger-chevron" :class="{ 'rotated': isPlatformDropdownOpen }"></i>
+            <i
+              class="fa-solid fa-chevron-down trigger-chevron"
+              :class="{ rotated: isPlatformDropdownOpen }"
+            ></i>
           </button>
 
           <!-- Multi-Select Popover Menu -->
           <div v-if="isPlatformDropdownOpen" class="multi-select-menu">
             <div class="menu-header">
               <span class="text-xs text-muted uppercase font-bold">Available Platforms</span>
-              <span class="text-xs text-accent">{{ selectedPlatforms.length }} / {{ availablePlatforms.length }} selected</span>
+              <span class="text-xs text-accent"
+                >{{ selectedPlatforms.length }} / {{ availablePlatforms.length }} selected</span
+              >
             </div>
             <div class="menu-options-list">
-              <label 
-                v-for="p in availablePlatforms" 
+              <label
+                v-for="p in availablePlatforms"
                 :key="p"
                 class="option-item"
-                :class="{ 'checked': selectedPlatforms.includes(p) }"
+                :class="{ checked: selectedPlatforms.includes(p) }"
               >
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   class="option-checkbox"
                   :checked="selectedPlatforms.includes(p)"
                   @change="togglePlatform(p)"
@@ -225,20 +242,15 @@
 
     <!-- Modal Footer -->
     <template #footer>
-      <button 
-        type="button"
-        class="btn btn-outline-secondary" 
-        @click="handleCancel"
-      >
-        Cancel
-      </button>
-      <button 
-        type="button"
-        class="btn btn-primary" 
-        :disabled="!canAdd" 
-        @click="handleSubmit"
-      >
-        {{ existingInLibrary ? (isSinglePlatform && !canAdd ? 'Already in Library' : 'Update Platforms') : 'Add' }}
+      <button type="button" class="btn btn-outline-secondary" @click="handleCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="!canAdd" @click="handleSubmit">
+        {{
+          existingInLibrary
+            ? isSinglePlatform && !canAdd
+              ? 'Already in Library'
+              : 'Update Platforms'
+            : 'Add'
+        }}
       </button>
     </template>
   </BaseModal>
@@ -286,7 +298,7 @@ const dropdownRef = ref(null);
 // Authenticated Services
 const authenticatedServices = computed(() => {
   const list = props.servicesList || [];
-  return list.filter(svc => {
+  return list.filter((svc) => {
     if (svc.id === 'steam') {
       return props.steamStatus?.has_valid_auth || svc.status === 'connected';
     }
@@ -297,7 +309,9 @@ const authenticatedServices = computed(() => {
 // Selected Game & Platforms
 const selectedGame = computed(() => {
   if (!selectedGameAppId.value) return null;
-  return availableGames.value.find(g => String(g.app_id) === String(selectedGameAppId.value)) || null;
+  return (
+    availableGames.value.find((g) => String(g.app_id) === String(selectedGameAppId.value)) || null
+  );
 });
 
 const availablePlatforms = computed(() => {
@@ -315,9 +329,12 @@ const isMultiPlatform = computed(() => {
 
 function getExistingGameInfo(appId) {
   if (!appId || !props.existingLibrary) return null;
-  return props.existingLibrary.find(
-    g => String(g.app_id) === String(appId) && (g.service || 'steam') === selectedServiceId.value
-  ) || null;
+  return (
+    props.existingLibrary.find(
+      (g) =>
+        String(g.app_id) === String(appId) && (g.service || 'steam') === selectedServiceId.value
+    ) || null
+  );
 }
 
 const existingInLibrary = computed(() => {
@@ -396,24 +413,27 @@ onBeforeUnmount(() => {
 });
 
 // Watch when modal opens/closes
-watch(() => props.modelValue, async (isOpen) => {
-  if (isOpen) {
-    selectedGameAppId.value = '';
-    selectedPlatforms.value = [];
-    isPlatformDropdownOpen.value = false;
-    fetchError.value = '';
-    privacyHint.value = '';
+watch(
+  () => props.modelValue,
+  async (isOpen) => {
+    if (isOpen) {
+      selectedGameAppId.value = '';
+      selectedPlatforms.value = [];
+      isPlatformDropdownOpen.value = false;
+      fetchError.value = '';
+      privacyHint.value = '';
 
-    if (authenticatedServices.value.length > 0) {
-      if (!authenticatedServices.value.some(s => s.id === selectedServiceId.value)) {
-        selectedServiceId.value = authenticatedServices.value[0].id;
+      if (authenticatedServices.value.length > 0) {
+        if (!authenticatedServices.value.some((s) => s.id === selectedServiceId.value)) {
+          selectedServiceId.value = authenticatedServices.value[0].id;
+        }
+        await loadGames(selectedServiceId.value);
+      } else {
+        availableGames.value = [];
       }
-      await loadGames(selectedServiceId.value);
-    } else {
-      availableGames.value = [];
     }
   }
-});
+);
 
 // Watch game selection to handle single vs multi-platform setup
 watch(selectedGameAppId, async (newId) => {
@@ -424,7 +444,7 @@ watch(selectedGameAppId, async (newId) => {
       if (platRes && Array.isArray(platRes.platforms) && platRes.platforms.length > 0) {
         selectedGame.value.platforms = platRes.platforms;
       }
-    } catch (e) {}
+    } catch {}
 
     const existing = getExistingGameInfo(newId);
     if (existing && existing.platform) {
@@ -450,12 +470,9 @@ function handleCancel() {
 function handleSubmit() {
   if (!canAdd.value || !selectedGame.value) return;
 
-  let platformResult = '';
-  if (isSinglePlatform.value) {
-    platformResult = availablePlatforms.value[0];
-  } else {
-    platformResult = selectedPlatforms.value.join(', ');
-  }
+  const platformResult = isSinglePlatform.value
+    ? availablePlatforms.value[0]
+    : selectedPlatforms.value.join(', ');
 
   emit('submit', {
     appId: selectedGame.value.app_id,
@@ -636,8 +653,9 @@ function handleSubmit() {
 }
 
 /* Service Colors */
-.store-bg-steam { color: #66c0f4; }
-.store-bg-epic { color: #ffffff; }
+.store-bg-steam {
+  color: #66c0f4;
+}
 
 /* Form Controls */
 .label-row {
@@ -801,8 +819,14 @@ function handleSubmit() {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .menu-header {

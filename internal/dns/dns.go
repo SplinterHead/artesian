@@ -15,11 +15,11 @@ import (
 
 // Interceptor handles DNS query matching and resolution
 type Interceptor struct {
-	cfg          config.DNSConfig
-	interceptIP  net.IP
+	cfg           config.DNSConfig
+	interceptIP   net.IP
 	upstreamAddrs []string
-	patterns     []string
-	mu           sync.RWMutex
+	patterns      []string
+	mu            sync.RWMutex
 }
 
 // normalizeUpstreams ensures all upstream DNS targets have an explicit port (:53 by default)
@@ -193,7 +193,7 @@ func (s *Server) handleQuery(clientAddr net.Addr, packet []byte) {
 		targetIP := s.interceptor.GetInterceptIP()
 		log.Printf("[Artesian DNS -> Intercepted] %s queried %s -> Redirecting to %s",
 			clientAddr.String(), domain, targetIP)
-		
+
 		resp := buildSyntheticAResponse(packet, targetIP)
 		if len(resp) > 0 {
 			_, _ = s.conn.WriteTo(resp, clientAddr)
@@ -203,7 +203,7 @@ func (s *Server) handleQuery(clientAddr net.Addr, packet []byte) {
 
 	if isQuery {
 		dLower := strings.ToLower(domain)
-		if strings.Contains(dLower, "epic") || strings.Contains(dLower, "steam") || strings.Contains(dLower, "akamaized") || strings.Contains(dLower, "unreal") || strings.Contains(dLower, "fastly") {
+		if strings.Contains(dLower, "steam") {
 			log.Printf("[Artesian DNS -> Forwarded] %s queried %s (not in intercept list)", clientAddr.String(), domain)
 		}
 	}

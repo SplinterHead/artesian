@@ -24,22 +24,7 @@ export const DEFAULT_SERVICES = [
       'content*.steampowered.com',
       '*.steamcontent.com',
     ],
-    description: 'Depot manifest decryption, PICS change polling, and high-throughput chunk caching.',
-  },
-  {
-    id: 'epic',
-    display_name: 'Epic Games',
-    company: 'Epic Games',
-    status: 'disconnected',
-    intercept_enabled: true,
-    auto_update: true,
-    username: '',
-    domains: [
-      'epicgames-download*.akamaized.net',
-      'download.epicgames.com',
-      'fastly-download.epicgames.com',
-      '*.download.epicgames.com',
-    ],
-    description: 'Epic Games Launcher OAuth2 API, binary manifest parsing, and chunk caching.',
+    description:
+      'Depot manifest decryption, PICS change polling, and high-throughput chunk caching.',
   },
 ];

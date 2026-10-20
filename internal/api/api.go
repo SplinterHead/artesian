@@ -26,7 +26,6 @@ import (
 	"artesian/web"
 )
 
-
 // Server coordinates HTTP endpoints and WebSocket streaming
 type Server struct {
 	cfg       config.ServerConfig
@@ -403,8 +402,6 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 		"traffic":   traffic,
 	})
 }
-
-
 
 // ServiceItem represents metadata for an integrated or planned game service
 type ServiceItem struct {

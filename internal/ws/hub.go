@@ -27,11 +27,11 @@ type Event struct {
 
 // Hub maintains the set of active clients and broadcasts messages
 type Hub struct {
-	clients   map[*Client]bool
-	broadcast chan Event
-	register  chan *Client
+	clients    map[*Client]bool
+	broadcast  chan Event
+	register   chan *Client
 	unregister chan *Client
-	mu        sync.RWMutex
+	mu         sync.RWMutex
 }
 
 // Client represents a single connected UI websocket client

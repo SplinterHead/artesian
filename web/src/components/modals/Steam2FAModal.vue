@@ -1,7 +1,7 @@
 <template>
-  <BaseModal 
-    :model-value="modelValue" 
-    title="Steam Guard Authentication" 
+  <BaseModal
+    :model-value="modelValue"
+    title="Steam Guard Authentication"
     :show-close="false"
     :close-on-backdrop="false"
     @update:model-value="$emit('update:modelValue', $event)"
@@ -9,7 +9,9 @@
     <div class="steam-auth-header mb-3">
       <div class="account-badge">
         <i class="fa-brands fa-steam mr-1"></i>
-        <span>Account: <strong>{{ username }}</strong></span>
+        <span
+          >Account: <strong>{{ username }}</strong></span
+        >
       </div>
     </div>
 
@@ -24,7 +26,8 @@
       <div class="approval-text-col">
         <h4 class="approval-title">Steam Mobile App Confirmation</h4>
         <p class="approval-desc">
-          Open your <strong>Steam Mobile App</strong> and tap <strong>Approve</strong> on the sign-in prompt to log in automatically.
+          Open your <strong>Steam Mobile App</strong> and tap <strong>Approve</strong> on the
+          sign-in prompt to log in automatically.
         </p>
         <div class="approval-status-pill">
           <i class="fa-solid fa-circle-notch fa-spin mr-2"></i>
@@ -53,15 +56,19 @@
 
     <div class="form-group mb-3">
       <label class="code-label">
-        {{ hasEmailCode && !hasMobileConfirmation ? 'Steam Guard Email Code:' : 'Steam Guard Authenticator Code:' }}
+        {{
+          hasEmailCode && !hasMobileConfirmation
+            ? 'Steam Guard Email Code:'
+            : 'Steam Guard Authenticator Code:'
+        }}
       </label>
-      <input 
-        type="text" 
-        class="form-control text-center code-input uppercase-input" 
+      <input
+        type="text"
+        class="form-control text-center code-input uppercase-input"
         :value="code"
         :disabled="loading"
         @input="handleInput"
-        placeholder="e.g. 5R7X9" 
+        placeholder="e.g. 5R7X9"
         maxlength="10"
         autofocus
         @keyup.enter="handleSubmit"
@@ -69,9 +76,9 @@
     </div>
 
     <div class="mt-2 text-center">
-      <button 
-        type="button" 
-        class="switch-account-btn" 
+      <button
+        type="button"
+        class="switch-account-btn"
         :disabled="loading"
         @click="$emit('switch-account')"
       >
@@ -80,26 +87,24 @@
     </div>
 
     <template #footer>
-      <button 
-        type="button" 
-        class="btn btn-outline-secondary" 
+      <button
+        type="button"
+        class="btn btn-outline-secondary"
         :disabled="loading"
         @click="$emit('dismiss')"
       >
         Dismiss
       </button>
-      <button 
-        type="button" 
-        class="btn btn-primary" 
-        :disabled="!code.trim() || loading" 
+      <button
+        type="button"
+        class="btn btn-primary"
+        :disabled="!code.trim() || loading"
         @click="handleSubmit"
       >
         <span v-if="loading" class="btn-spinner-content">
           <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Verifying...
         </span>
-        <span v-else>
-          Verify Code
-        </span>
+        <span v-else> Verify Code </span>
       </button>
     </template>
   </BaseModal>
@@ -136,11 +141,14 @@ const emit = defineEmits(['update:modelValue', 'submit', 'dismiss', 'switch-acco
 
 const code = ref('');
 
-watch(() => props.modelValue, (val) => {
-  if (val) {
-    code.value = '';
+watch(
+  () => props.modelValue,
+  (val) => {
+    if (val) {
+      code.value = '';
+    }
   }
-});
+);
 
 function handleInput(event) {
   code.value = (event.target.value || '').toUpperCase();
@@ -323,7 +331,8 @@ function handleSubmit() {
   margin-bottom: 0.4rem;
 }
 
-.code-input, .uppercase-input {
+.code-input,
+.uppercase-input {
   text-transform: uppercase;
   letter-spacing: 0.25em;
   font-family: 'JetBrains Mono', monospace;

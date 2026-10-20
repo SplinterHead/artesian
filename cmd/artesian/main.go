@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"artesian/internal/adapters/epic"
 	"artesian/internal/adapters/steam"
 	"artesian/internal/api"
 	"artesian/internal/cache"
@@ -73,10 +72,6 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
 	registry.Register(steamAdapter)
 	log.Println("[Artesian] Service registered: Steam")
-
-	epicAdapter := epic.NewAdapter(database, storage, &cfg.DNS)
-	registry.Register(epicAdapter)
-	log.Println("[Artesian] Service registered: Epic Games")
 
 	// 6. Initialize Prefill & Scheduler Subsystems
 	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)

@@ -27,7 +27,9 @@
         <div class="game-name">{{ game.name }}</div>
         <div v-if="gameSize > 0" class="game-size-row">
           <i class="fa-solid fa-hard-drive mr-1"></i>
-          <span>Cache size to delete: <strong>{{ formatBytes(gameSize) }}</strong></span>
+          <span
+            >Cache size to delete: <strong>{{ formatBytes(gameSize) }}</strong></span
+          >
         </div>
       </div>
 
@@ -37,24 +39,25 @@
           All associated chunks and manifests on disk will be deleted.
         </p>
         <p class="mb-0 text-muted text-xs">
-          This game will no longer be cached on your local network. Any active downloads or prefill processes will be cancelled immediately.
+          This game will no longer be cached on your local network. Any active downloads or prefill
+          processes will be cancelled immediately.
         </p>
       </div>
     </div>
 
     <template #footer>
-      <button 
-        type="button" 
-        class="btn btn-outline-secondary" 
-        :disabled="loading" 
+      <button
+        type="button"
+        class="btn btn-outline-secondary"
+        :disabled="loading"
         @click="$emit('update:modelValue', false)"
       >
         Cancel
       </button>
-      <button 
-        type="button" 
-        class="btn btn-danger btn-confirm-delete" 
-        :disabled="loading" 
+      <button
+        type="button"
+        class="btn btn-danger btn-confirm-delete"
+        :disabled="loading"
         @click="$emit('confirm')"
       >
         <template v-if="loading">

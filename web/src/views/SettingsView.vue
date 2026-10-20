@@ -5,35 +5,49 @@
       <div class="card-header">
         <div>
           <h3>DNS Interception & Forwarding</h3>
-          <p class="section-subtitle">Configure upstream resolvers and the target IP for local network game cache interception.</p>
+          <p class="section-subtitle">
+            Configure upstream resolvers and the target IP for local network game cache
+            interception.
+          </p>
         </div>
       </div>
-      
+
       <div class="form-group mb-3">
         <label>Upstream Resolvers (comma-separated IP:port):</label>
-        <input 
-          type="text" 
-          class="form-control" 
-          :value="dnsInput" 
+        <input
+          type="text"
+          class="form-control"
+          :value="dnsInput"
           @input="$emit('update:dnsInput', $event.target.value)"
           placeholder="1.1.1.1:53, 8.8.8.8:53"
         />
-        <small class="text-muted">Standard DNS forwarders used for resolving non-cached public Internet domain queries.</small>
+        <small class="text-muted"
+          >Standard DNS forwarders used for resolving non-cached public Internet domain
+          queries.</small
+        >
       </div>
 
       <div class="form-group mb-3">
         <label>Interception Target IPv4 (Artesian Appliance IP):</label>
-        <input 
-          type="text" 
-          class="form-control" 
-          :value="interceptIpInput" 
+        <input
+          type="text"
+          class="form-control"
+          :value="interceptIpInput"
           @input="$emit('update:interceptIpInput', $event.target.value)"
           placeholder="127.0.0.1 or LAN IP (e.g. 192.168.1.100)"
         />
-        <small class="text-muted">The IP address returned to LAN clients for game CDN hostnames to direct traffic to the reverse proxy.</small>
+        <small class="text-muted"
+          >The IP address returned to LAN clients for game CDN hostnames to direct traffic to the
+          reverse proxy.</small
+        >
         <div v-if="interceptIpInput === '127.0.0.1'" class="warning-callout mt-2">
           <i class="fa-solid fa-triangle-exclamation mr-1"></i>
-          <span><strong>Notice:</strong> Currently set to loopback (<code>127.0.0.1</code>). For remote LAN devices to route through Artesian, enter the LAN IP of this server (e.g. <code>192.168.0.x</code>) so client machines don't redirect to their own localhost.</span>
+          <span
+            ><strong>Notice:</strong> Currently set to loopback (<code>127.0.0.1</code>). For remote
+            LAN devices to route through Artesian, enter the LAN IP of this server (e.g.
+            <code>192.168.0.x</code>) so client machines don't redirect to their own
+            localhost.</span
+          >
         </div>
       </div>
 
@@ -49,33 +63,39 @@
       <div class="card-header">
         <div>
           <h3>Storage Pool Mapping</h3>
-          <p class="section-subtitle">Content-addressable chunk cache storage directory and disk quota.</p>
+          <p class="section-subtitle">
+            Content-addressable chunk cache storage directory and disk quota.
+          </p>
         </div>
       </div>
 
       <div class="form-group mb-3">
         <label>Cache Storage Directory:</label>
-        <input 
-          type="text" 
-          class="form-control" 
-          :value="storagePathInput" 
+        <input
+          type="text"
+          class="form-control"
+          :value="storagePathInput"
           @input="$emit('update:storagePathInput', $event.target.value)"
           placeholder="/data/cache"
         />
-        <small class="text-muted">Absolute path where raw chunk blobs and manifest files are stored on disk.</small>
+        <small class="text-muted"
+          >Absolute path where raw chunk blobs and manifest files are stored on disk.</small
+        >
       </div>
 
       <div class="form-group mb-3">
         <label>Max Storage Capacity Quota (GB):</label>
-        <input 
-          type="number" 
-          class="form-control" 
-          :value="maxStorageGbInput" 
+        <input
+          type="number"
+          class="form-control"
+          :value="maxStorageGbInput"
           @input="$emit('update:maxStorageGbInput', $event.target.value)"
           placeholder="2048"
           min="10"
         />
-        <small class="text-muted">Upper storage limit before automated cache LRU retention pruning engages.</small>
+        <small class="text-muted"
+          >Upper storage limit before automated cache LRU retention pruning engages.</small
+        >
       </div>
 
       <div class="form-actions mt-3">
@@ -103,7 +123,9 @@
             <tr>
               <td><strong>SQLite Database</strong></td>
               <td><code>/data/artesian.db</code></td>
-              <td>Persistent state database containing credentials, settings, and chunk indices.</td>
+              <td>
+                Persistent state database containing credentials, settings, and chunk indices.
+              </td>
             </tr>
             <tr>
               <td><strong>Chunk Storage</strong></td>

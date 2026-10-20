@@ -43,13 +43,16 @@ export function useWebSocket(eventHandlers = {}) {
 
   function connect() {
     if (isClosedManually) return;
-    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/v1/ws`;
-    
+
     try {
       socket = new WebSocket(wsUrl);
 

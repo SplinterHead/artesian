@@ -5,11 +5,11 @@
       <div class="card-header">
         <div>
           <h3>Game Library</h3>
-          <span class="text-xs text-muted">Explicitly monitored games configured for automated caching and prefilling</span>
+          <span class="text-xs text-muted"
+            >Explicitly monitored games configured for automated caching and prefilling</span
+          >
         </div>
-        <button class="btn btn-primary btn-sm" @click="$emit('open-add-game')">
-          + Add Game
-        </button>
+        <button class="btn btn-primary btn-sm" @click="$emit('open-add-game')">+ Add Game</button>
       </div>
 
       <div class="table-wrap">
@@ -42,15 +42,15 @@
             </tr>
             <tr v-for="game in library" :key="(game.service || 'steam') + game.app_id">
               <td class="col-store">
-                <div 
-                  class="store-logo-box" 
+                <div
+                  class="store-logo-box"
                   :class="'store-logo-' + (getLogoKey(game.service) || 'generic')"
                   :title="game.service ? game.service.toUpperCase() : 'Steam'"
                 >
-                  <svg 
-                    v-if="platformLogos[getLogoKey(game.service)]" 
-                    class="store-svg-logo" 
-                    :viewBox="platformLogos[getLogoKey(game.service)].viewBox" 
+                  <svg
+                    v-if="platformLogos[getLogoKey(game.service)]"
+                    class="store-svg-logo"
+                    :viewBox="platformLogos[getLogoKey(game.service)].viewBox"
                     fill="currentColor"
                   >
                     <path :d="platformLogos[getLogoKey(game.service)].path" />
@@ -62,10 +62,10 @@
                 <div class="game-cell">
                   <strong class="game-title-text" :title="game.name">{{ game.name }}</strong>
                   <span v-if="game.platform" class="platform-tags-wrap">
-                    <span 
-                      v-for="p in getPlatformList(game.platform)" 
-                      :key="p" 
-                      class="platform-tag" 
+                    <span
+                      v-for="p in getPlatformList(game.platform)"
+                      :key="p"
+                      class="platform-tag"
                       :title="p"
                     >
                       <i :class="getPlatformIcon(p)"></i>
@@ -79,10 +79,14 @@
                 </span>
               </td>
               <td class="col-autoupdate">
-                <button 
+                <button
                   type="button"
                   class="badge-toggle-btn"
-                  :title="'Click to turn ' + (game.auto_update ? 'off' : 'on') + ' auto-update for this title'"
+                  :title="
+                    'Click to turn ' +
+                    (game.auto_update ? 'off' : 'on') +
+                    ' auto-update for this title'
+                  "
                   @click="$emit('toggle-game-autoupdate', game)"
                 >
                   <span class="badge" :class="game.auto_update ? 'badge-hit' : 'badge-secondary'">
@@ -98,22 +102,30 @@
               <td class="col-sync text-muted">{{ formatDate(game.last_checked) }}</td>
               <td class="col-actions">
                 <div class="table-actions">
-                  <button 
+                  <button
                     class="btn btn-xs btn-outline-primary btn-icon-xs"
-                    :disabled="recheckingKey === getGameKey(game) || deletingKey === getGameKey(game)"
+                    :disabled="
+                      recheckingKey === getGameKey(game) || deletingKey === getGameKey(game)
+                    "
                     title="Re-check and sync chunks against depot"
                     @click="$emit('recheck-game', game)"
                   >
-                    <i v-if="recheckingKey === getGameKey(game)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i
+                      v-if="recheckingKey === getGameKey(game)"
+                      class="fa-solid fa-circle-notch fa-spin"
+                    ></i>
                     <i v-else class="fa-solid fa-rotate-right"></i>
                   </button>
-                  <button 
+                  <button
                     class="btn btn-xs btn-outline-danger btn-icon-xs"
                     :disabled="deletingKey === getGameKey(game)"
                     title="Remove game from library"
                     @click="$emit('remove-from-library', game)"
                   >
-                    <i v-if="deletingKey === getGameKey(game)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i
+                      v-if="deletingKey === getGameKey(game)"
+                      class="fa-solid fa-circle-notch fa-spin"
+                    ></i>
                     <i v-else class="fa-solid fa-trash"></i>
                   </button>
                 </div>
@@ -129,7 +141,10 @@
       <div class="card-header">
         <div>
           <h3>Cached Games</h3>
-          <span class="text-xs text-muted">Games intercepted through the proxy cache, not yet explicitly added to your library</span>
+          <span class="text-xs text-muted"
+            >Games intercepted through the proxy cache, not yet explicitly added to your
+            library</span
+          >
         </div>
         <button class="btn btn-secondary btn-xs" @click="$emit('refresh-cached')">
           <i class="fa-solid fa-rotate mr-1"></i> Refresh
@@ -160,17 +175,20 @@
                 No games cached yet, they'll appear here when you start downloading in Steam
               </td>
             </tr>
-            <tr v-for="item in cachedGames" :key="(item.service || 'steam') + item.app_id + item.name">
+            <tr
+              v-for="item in cachedGames"
+              :key="(item.service || 'steam') + item.app_id + item.name"
+            >
               <td class="col-store">
-                <div 
-                  class="store-logo-box" 
+                <div
+                  class="store-logo-box"
                   :class="'store-logo-' + (getLogoKey(item.service) || 'generic')"
                   :title="item.service ? item.service.toUpperCase() : 'Steam'"
                 >
-                  <svg 
-                    v-if="platformLogos[getLogoKey(item.service)]" 
-                    class="store-svg-logo" 
-                    :viewBox="platformLogos[getLogoKey(item.service)].viewBox" 
+                  <svg
+                    v-if="platformLogos[getLogoKey(item.service)]"
+                    class="store-svg-logo"
+                    :viewBox="platformLogos[getLogoKey(item.service)].viewBox"
                     fill="currentColor"
                   >
                     <path :d="platformLogos[getLogoKey(item.service)].path" />
@@ -182,10 +200,10 @@
                 <div class="game-cell">
                   <strong class="game-title-text" :title="item.name">{{ item.name }}</strong>
                   <span v-if="item.platform" class="platform-tags-wrap">
-                    <span 
-                      v-for="p in getPlatformList(item.platform)" 
-                      :key="p" 
-                      class="platform-tag" 
+                    <span
+                      v-for="p in getPlatformList(item.platform)"
+                      :key="p"
+                      class="platform-tag"
                       :title="p"
                     >
                       <i :class="getPlatformIcon(p)"></i>
@@ -201,20 +219,23 @@
               <td class="col-sync text-muted">{{ formatDate(item.last_seen) }}</td>
               <td class="col-actions">
                 <div class="table-actions">
-                  <button 
+                  <button
                     class="btn btn-xs btn-outline-primary btn-icon-xs"
                     title="Add to Library"
                     @click="$emit('add-to-library', item)"
                   >
                     <i class="fa-solid fa-plus"></i>
                   </button>
-                  <button 
+                  <button
                     class="btn btn-xs btn-outline-danger btn-icon-xs"
                     :disabled="deletingKey === getGameKey(item)"
                     title="Delete cached game and purge chunks"
                     @click="$emit('delete-cached-game', item)"
                   >
-                    <i v-if="deletingKey === getGameKey(item)" class="fa-solid fa-circle-notch fa-spin"></i>
+                    <i
+                      v-if="deletingKey === getGameKey(item)"
+                      class="fa-solid fa-circle-notch fa-spin"
+                    ></i>
                     <i v-else class="fa-solid fa-trash"></i>
                   </button>
                 </div>
@@ -228,12 +249,12 @@
 </template>
 
 <script setup>
-import { 
-  formatBytes, 
-  formatDate, 
-  getLogoKey, 
+import {
+  formatBytes,
+  formatDate,
+  getLogoKey,
   getPlatformIcon,
-  getPlatformList
+  getPlatformList,
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -256,7 +277,16 @@ defineProps({
   },
 });
 
-defineEmits(['open-add-game', 'trigger-prefill', 'recheck-game', 'add-to-library', 'remove-from-library', 'refresh-cached', 'delete-cached-game', 'toggle-game-autoupdate']);
+defineEmits([
+  'open-add-game',
+  'trigger-prefill',
+  'recheck-game',
+  'add-to-library',
+  'remove-from-library',
+  'refresh-cached',
+  'delete-cached-game',
+  'toggle-game-autoupdate',
+]);
 
 function getGameKey(game) {
   if (!game) return '';
@@ -421,19 +451,6 @@ function getGameKey(game) {
   background: radial-gradient(circle at top left, rgba(102, 192, 244, 0.25), rgba(23, 26, 38, 0.8));
   color: #66c0f4;
   border: 1px solid rgba(102, 192, 244, 0.35);
-}
-
-.store-logo-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(20, 20, 20, 0.85));
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
-}
-
-.store-logo-epic:hover {
-  border-color: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.3);
-  color: #ffffff;
 }
 
 .store-logo-generic {

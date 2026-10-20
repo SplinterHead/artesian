@@ -43,7 +43,9 @@ export const api = {
     return request(`/api/v1/services/available-games?service=${encodeURIComponent(service)}`);
   },
   async getGamePlatforms(service, appId) {
-    return request(`/api/v1/games/platforms?service=${encodeURIComponent(service)}&app_id=${encodeURIComponent(appId)}`);
+    return request(
+      `/api/v1/games/platforms?service=${encodeURIComponent(service)}&app_id=${encodeURIComponent(appId)}`
+    );
   },
 
   // Platform Authentication
@@ -94,7 +96,14 @@ export const api = {
       method: 'DELETE',
     });
   },
-  async addGame({ appId, name, service = 'steam', platform = '', autoUpdate = true, replacePlatforms = false }) {
+  async addGame({
+    appId,
+    name,
+    service = 'steam',
+    platform = '',
+    autoUpdate = true,
+    replacePlatforms = false,
+  }) {
     return request('/api/v1/library', {
       method: 'POST',
       body: JSON.stringify({

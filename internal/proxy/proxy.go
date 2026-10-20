@@ -1,6 +1,13 @@
 package proxy
 
 import (
+	"artesian/internal/cache"
+	"artesian/internal/config"
+	"artesian/internal/db"
+	"artesian/internal/manifest"
+	"artesian/internal/ports"
+	"artesian/internal/services"
+	"artesian/internal/ws"
 	"bytes"
 	"context"
 	"fmt"
@@ -9,22 +16,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"artesian/internal/adapters/epic"
-	"artesian/internal/cache"
-	"artesian/internal/config"
-	"artesian/internal/db"
-	"artesian/internal/manifest"
-	"artesian/internal/ports"
-	"artesian/internal/services"
-	"artesian/internal/ws"
 )
 
 // DepotLinkInfo represents a depot with its external database inspection URL
@@ -36,23 +33,23 @@ type DepotLinkInfo struct {
 
 // GameDownloadSession represents an active game download session bundled across all depots and files
 type GameDownloadSession struct {
-	Key              string          `json:"key"`                // client_ip:store:game_key
-	ClientIP         string          `json:"client_ip"`          // e.g. "192.168.65.1"
-	Store            string          `json:"store"`              // "Steam"
-	Service          string          `json:"service"`            // "steam"
-	GameTitle        string          `json:"game_title"`         // e.g. "Game Dev Tycoon", "Counter-Strike 2"
-	AppID            int64           `json:"app_id,omitempty"`   // Steam App ID
-	Platform         string          `json:"platform"`           // e.g. "Windows", "Mac 64bit", "Linux 64bit"
-	Depots           []int64         `json:"depots"`             // Unique depot IDs downloaded for this game
-	DepotLinks       []DepotLinkInfo `json:"depot_links"`        // SteamDB links for each depot
-	BytesTransferred int64           `json:"bytes_transferred"`  // Sum of all chunk bytes transferred
-	TotalDepotSize   int64           `json:"total_depot_size"`   // Full combined depot size across all depots
-	ChunkCount       int64           `json:"chunk_count"`        // Total files/chunks downloaded
+	Key              string          `json:"key"`               // client_ip:store:game_key
+	ClientIP         string          `json:"client_ip"`         // e.g. "192.168.65.1"
+	Store            string          `json:"store"`             // "Steam"
+	Service          string          `json:"service"`           // "steam"
+	GameTitle        string          `json:"game_title"`        // e.g. "Game Dev Tycoon", "Counter-Strike 2"
+	AppID            int64           `json:"app_id,omitempty"`  // Steam App ID
+	Platform         string          `json:"platform"`          // e.g. "Windows", "Mac 64bit", "Linux 64bit"
+	Depots           []int64         `json:"depots"`            // Unique depot IDs downloaded for this game
+	DepotLinks       []DepotLinkInfo `json:"depot_links"`       // SteamDB links for each depot
+	BytesTransferred int64           `json:"bytes_transferred"` // Sum of all chunk bytes transferred
+	TotalDepotSize   int64           `json:"total_depot_size"`  // Full combined depot size across all depots
+	ChunkCount       int64           `json:"chunk_count"`       // Total files/chunks downloaded
 	Hits             int64           `json:"hits"`
 	Misses           int64           `json:"misses"`
 	FirstSeen        time.Time       `json:"first_seen"`
 	LastActive       time.Time       `json:"last_active"`
-	Timestamp        string          `json:"timestamp"`          // Initial chunk timestamp "15:04:05"
+	Timestamp        string          `json:"timestamp"` // Initial chunk timestamp "15:04:05"
 }
 
 // TrafficEvent is streamed via WebSocket to the frontend in real time
@@ -69,14 +66,14 @@ type TrafficEvent struct {
 	Service          string `json:"service"`
 
 	// Enriched fields for Active Downloads panel
-	Store          string               `json:"store"`             // "Steam"
-	GameTitle      string               `json:"game_title"`        // e.g. "Counter-Strike 2"
-	Platform       string               `json:"platform"`          // e.g. "Windows", "Mac 64bit"
-	DepotID        int64                `json:"depot_id,omitempty"` // e.g. 731
-	ChunkID        string               `json:"chunk_id,omitempty"` // e.g. "chunk_01" or "1a9ae1fc921de40b"
+	Store          string               `json:"store"`                // "Steam"
+	GameTitle      string               `json:"game_title"`           // e.g. "Counter-Strike 2"
+	Platform       string               `json:"platform"`             // e.g. "Windows", "Mac 64bit"
+	DepotID        int64                `json:"depot_id,omitempty"`   // e.g. 731
+	ChunkID        string               `json:"chunk_id,omitempty"`   // e.g. "chunk_01" or "1a9ae1fc921de40b"
 	LookupURL      string               `json:"lookup_url,omitempty"` // SteamDB link
-	TotalDepotSize int64                `json:"total_depot_size"`  // Total bytes for this depot or game
-	Session        *GameDownloadSession `json:"session,omitempty"` // Unified game download session
+	TotalDepotSize int64                `json:"total_depot_size"`     // Total bytes for this depot or game
+	Session        *GameDownloadSession `json:"session,omitempty"`    // Unified game download session
 }
 
 type dbLogEntry struct {
@@ -113,7 +110,6 @@ func FormatStoreName(service string) string {
 	}
 	return strings.ToUpper(service[:1]) + strings.ToLower(service[1:])
 }
-
 
 // responseObserver wraps http.ResponseWriter to capture response status, bytes, and support Flusher
 type responseObserver struct {
@@ -169,9 +165,6 @@ type Server struct {
 	// Dynamic upstream DNS resolution
 	dnsMu        sync.RWMutex
 	upstreamAddr string
-
-	// HTTPS transparent SNI pass-through proxy (:443)
-	sniProxy *SNIProxy
 }
 
 // isSelfOrLoopback checks if a host header targets Artesian itself
@@ -204,9 +197,6 @@ func (s *Server) SetUpstreamDNS(upstreams []string) {
 	s.dnsMu.Lock()
 	s.upstreamAddr = addr
 	s.dnsMu.Unlock()
-	if s.sniProxy != nil {
-		s.sniProxy.SetUpstreamDNS(addr)
-	}
 }
 
 // NewServer initializes the proxy engine
@@ -231,7 +221,6 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 	} else {
 		s.upstreamAddr = "1.1.1.1:53"
 	}
-	s.sniProxy = NewSNIProxy(":443", s.upstreamAddr)
 
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
@@ -264,7 +253,6 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 		DisableCompression:    true, // Critical: preserves byte-range chunks without decompressing
 	}
 	s.transport = transport
-
 
 	// Singleton reusable reverse proxy with pooled transport
 	s.reverseProxy = &httputil.ReverseProxy{
@@ -329,48 +317,6 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 									log.Printf("[Artesian Proxy] Warning: Could not parse intercepted manifest for depot %d: %v", mDepotID, pErr)
 								}
 							}
-
-							// 3. Epic manifest interception and automatic chunk indexing
-							if svcName == "epic" && (strings.HasSuffix(strings.ToLower(cKey), ".manifest") || strings.HasSuffix(strings.ToLower(cKey), ".json")) {
-								parsedManifest, pErr := epic.ParseManifest(data)
-								if pErr == nil && parsedManifest != nil && len(parsedManifest.Chunks) > 0 {
-									appName := extractEpicAppNameFromURL(cKey)
-									appID := epic.HashAppName(appName)
-									if appName == "" {
-										appName = fmt.Sprintf("Epic App %d", appID)
-									}
-
-									displayTitle := appName
-									if metaName, _, mErr := s.db.GetGameMeta(appName); mErr == nil && metaName != "" {
-										displayTitle = metaName
-									}
-
-									log.Printf("[Artesian Proxy] Intercepted and indexed %d genuine Epic chunks for %s (App ID %d, Size %d)",
-										len(parsedManifest.Chunks), displayTitle, appID, parsedManifest.TotalSize)
-
-									chunkRecords := make([]db.ManifestChunkRecord, len(parsedManifest.Chunks))
-									for i, c := range parsedManifest.Chunks {
-										chunkRecords[i] = db.ManifestChunkRecord{
-											DepotID:      appID,
-											ManifestID:   1,
-											ChunkID:      c.ChunkID,
-											SizeBytes:    c.SizeBytes,
-											OriginalSize: c.SizeBytes,
-										}
-									}
-									_ = s.db.SaveManifestChunks(appID, 1, chunkRecords)
-									_ = s.db.UpsertDepotMeta(db.DepotMeta{
-										DepotID:    appID,
-										AppID:      appID,
-										GameTitle:  displayTitle,
-										Platform:   "Windows",
-										TotalSize:  parsedManifest.TotalSize,
-										ManifestID: 1,
-									})
-								} else if pErr != nil {
-									log.Printf("[Artesian Proxy] Warning: Could not parse intercepted Epic manifest: %v", pErr)
-								}
-							}
 						}
 					}(ctxData.serviceName, ctxData.cacheKey, bodyBytes)
 				}
@@ -406,16 +352,9 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 	return s
 }
 
-// Start runs the proxy listener and transparent HTTPS SNI proxy
+// Start runs the proxy listener
 func (s *Server) Start() error {
 	log.Printf("[Artesian Proxy] Core proxy engine online on %s", s.cfg.ListenAddr)
-	if s.sniProxy != nil {
-		go func() {
-			if err := s.sniProxy.Start(); err != nil {
-				log.Printf("[Artesian SNI Proxy] Notice: %v (running without port 443 pass-through)", err)
-			}
-		}()
-	}
 	return s.httpServer.ListenAndServe()
 }
 
@@ -425,9 +364,6 @@ func (s *Server) Close() error {
 	case <-s.closeCh:
 	default:
 		close(s.closeCh)
-	}
-	if s.sniProxy != nil {
-		_ = s.sniProxy.Stop()
 	}
 	s.wg.Wait()
 	if s.transport != nil {
@@ -1022,18 +958,4 @@ func (s *Server) flushLogs(entries []dbLogEntry) {
 		_, _ = stmt.Exec(e.clientIP, e.host, e.method, e.path, e.status, e.isHit, e.bytes, e.duration)
 	}
 	_ = tx.Commit()
-}
-
-func extractEpicAppNameFromURL(urlPath string) string {
-	base := filepath.Base(urlPath)
-	base = strings.TrimSuffix(base, ".manifest")
-	base = strings.TrimSuffix(base, ".json")
-	if idx := strings.Index(base, "_"); idx > 0 {
-		return base[:idx]
-	}
-	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
-	if len(parts) >= 2 {
-		return parts[len(parts)-2]
-	}
-	return base
 }

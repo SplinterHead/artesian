@@ -39,7 +39,7 @@ Artesian follows Hexagonal Architecture (Ports & Adapters) to completely decoupl
 - **Adapter Registry (`internal/services.Registry`)**:
   - Central registry holding all registered `PlatformAdapter` instances.
   - Core subsystems (`proxy`, `prefill`, `scheduler`, `api`, `dns`) interact strictly with `Registry`.
-  - Adding a new gaming service (e.g., Epic Games, Battle.net, Riot, Xbox) only requires implementing `ports.PlatformAdapter` and calling `registry.Register(adapter)` at startup.
+  - Adding a new gaming service (e.g., Battle.net, Riot, Xbox) only requires implementing `ports.PlatformAdapter` and calling `registry.Register(adapter)` at startup.
 - **Steam Adapter (`internal/adapters/steam`)**:
   - `auth.go`: Direct Steam Auth API integration, RSA encryption, 2FA submission, push notification polling.
   - `cm.go`: Pure-Go WebSocket Steam Connection Manager client (`wss://.../cmsocket/`), logon, RPC manifest request codes.

@@ -1,14 +1,21 @@
 <template>
   <div class="toggle-wrapper" :title="title">
-    <span v-if="activeText || inactiveText" class="toggle-status-label" :class="{ 'is-active': modelValue }">
+    <span
+      v-if="activeText || inactiveText"
+      class="toggle-status-label"
+      :class="{ 'is-active': modelValue }"
+    >
       {{ modelValue ? activeText : inactiveText }}
     </span>
     <label class="switch">
-      <input 
-        type="checkbox" 
-        :checked="modelValue" 
-        @change="$emit('update:modelValue', $event.target.checked); $emit('change', $event.target.checked)"
-      >
+      <input
+        type="checkbox"
+        :checked="modelValue"
+        @change="
+          $emit('update:modelValue', $event.target.checked);
+          $emit('change', $event.target.checked);
+        "
+      />
       <span class="slider"></span>
     </label>
   </div>

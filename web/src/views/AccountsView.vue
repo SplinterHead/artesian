@@ -7,22 +7,22 @@
     </div>
 
     <div class="services-grid">
-      <div 
-        v-for="svc in servicesList" 
-        :key="svc.id" 
-        class="service-panel card" 
-        :class="{ 
+      <div
+        v-for="svc in servicesList"
+        :key="svc.id"
+        class="service-panel card"
+        :class="{
           'service-connected': svc.status === 'connected',
-          'monitoring-disabled': !svc.intercept_enabled 
+          'monitoring-disabled': !svc.intercept_enabled,
         }"
       >
         <!-- Card Top Identity Header -->
         <div class="service-panel-top">
           <div class="service-icon-box" :class="'icon-' + svc.id">
-            <svg 
-              v-if="platformLogos[svc.id]" 
-              class="platform-svg-logo" 
-              :viewBox="platformLogos[svc.id].viewBox" 
+            <svg
+              v-if="platformLogos[svc.id]"
+              class="platform-svg-logo"
+              :viewBox="platformLogos[svc.id].viewBox"
               fill="currentColor"
             >
               <path :d="platformLogos[svc.id].path" />
@@ -31,7 +31,9 @@
           </div>
           <div class="service-title-area">
             <div class="service-name-row">
-              <h3 class="service-title-heading" :title="svc.display_name">{{ svc.display_name }}</h3>
+              <h3 class="service-title-heading" :title="svc.display_name">
+                {{ svc.display_name }}
+              </h3>
               <span class="company-sub">{{ svc.company }}</span>
             </div>
             <div class="service-badges mt-1">
@@ -45,10 +47,15 @@
 
         <!-- Integrated Controls Bar (Monitoring & Auto-Update on Separate Rows) -->
         <div class="service-toggles-bar">
-          <div 
-            class="toggle-card-row" 
+          <div
+            class="toggle-card-row"
             :class="{ 'is-active': svc.intercept_enabled }"
-            :title="'Turn ' + (svc.intercept_enabled ? 'off' : 'on') + ' request monitoring for ' + svc.display_name"
+            :title="
+              'Turn ' +
+              (svc.intercept_enabled ? 'off' : 'on') +
+              ' request monitoring for ' +
+              svc.display_name
+            "
           >
             <div class="toggle-row-left">
               <span class="toggle-label-main">
@@ -58,7 +65,7 @@
                 {{ svc.intercept_enabled ? 'ON' : 'OFF' }}
               </span>
             </div>
-            <ToggleSwitch 
+            <ToggleSwitch
               v-model="svc.intercept_enabled"
               @change="$emit('toggle-monitoring', svc)"
             />
@@ -66,10 +73,15 @@
 
           <div class="toggle-row-divider"></div>
 
-          <div 
-            class="toggle-card-row" 
+          <div
+            class="toggle-card-row"
             :class="{ 'is-active': svc.auto_update }"
-            :title="'Turn ' + (svc.auto_update ? 'off' : 'on') + ' automatic updates for ' + svc.display_name"
+            :title="
+              'Turn ' +
+              (svc.auto_update ? 'off' : 'on') +
+              ' automatic updates for ' +
+              svc.display_name
+            "
           >
             <div class="toggle-row-left">
               <span class="toggle-label-main">
@@ -79,29 +91,30 @@
                 {{ svc.auto_update ? 'ON' : 'OFF' }}
               </span>
             </div>
-            <ToggleSwitch 
-              v-model="svc.auto_update"
-              @change="$emit('toggle-autoupdate', svc)"
-            />
+            <ToggleSwitch v-model="svc.auto_update" @change="$emit('toggle-autoupdate', svc)" />
           </div>
         </div>
 
         <!-- Matching Patterns -->
         <div class="domains-container mt-3">
           <div class="domains-header">
-            <span class="text-xs text-muted uppercase font-semibold">Matching Patterns ({{ svc.domains.length }})</span>
+            <span class="text-xs text-muted uppercase font-semibold"
+              >Matching Patterns ({{ svc.domains.length }})</span
+            >
             <span v-if="!svc.intercept_enabled" class="badge badge-paused">PAUSED</span>
           </div>
           <div class="domain-pills mt-1">
-            <span v-for="d in svc.domains" :key="d" class="domain-pill"><code>{{ d }}</code></span>
+            <span v-for="d in svc.domains" :key="d" class="domain-pill"
+              ><code>{{ d }}</code></span
+            >
           </div>
         </div>
 
         <!-- Service Action Buttons -->
         <div class="service-actions-bar mt-4">
-          <button 
-            v-if="svc.status !== 'connected'" 
-            class="btn btn-sm btn-primary btn-block" 
+          <button
+            v-if="svc.status !== 'connected'"
+            class="btn btn-sm btn-primary btn-block"
             :class="{ 'btn-awaiting-2fa': svc.status === 'awaiting_2fa' }"
             @click="handleConnectButtonClick(svc)"
           >
@@ -111,12 +124,14 @@
             <template v-else-if="svc.status === 'connecting'">
               <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Connecting...
             </template>
-            <template v-else>
-              Connect {{ svc.display_name }} Account
-            </template>
+            <template v-else> Connect {{ svc.display_name }} Account </template>
           </button>
           <div v-else class="connected-btn-group">
-            <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('logout-service', svc.id)">
+            <button
+              class="btn btn-sm btn-outline-danger"
+              :title="'Disconnect ' + svc.username"
+              @click="$emit('logout-service', svc.id)"
+            >
               Disconnect ({{ svc.username }})
             </button>
             <button class="btn btn-sm btn-secondary" @click="$emit('switch-tab', 'library')">
@@ -141,12 +156,12 @@ defineProps({
 });
 
 const emit = defineEmits([
-  'toggle-monitoring', 
+  'toggle-monitoring',
   'toggle-autoupdate',
   'open-login',
   'open-steam-2fa',
   'logout-service',
-  'switch-tab', 
+  'switch-tab',
 ]);
 
 function handleConnectButtonClick(svc) {
@@ -219,7 +234,9 @@ function getServiceStatusText(svc) {
   border-radius: var(--radius);
   padding: 1.25rem;
   min-width: 0;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .service-panel:hover {
@@ -261,19 +278,6 @@ function getServiceStatusText(svc) {
   color: #66c0f4;
   background: rgba(102, 192, 244, 0.1);
   border-color: rgba(102, 192, 244, 0.25);
-}
-
-.service-icon-box.icon-epic {
-  color: #ffffff;
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.18), rgba(15, 23, 42, 0.95));
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-}
-
-.service-icon-box.icon-epic:hover {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.28), rgba(30, 41, 59, 0.95));
-  border-color: rgba(255, 255, 255, 0.55);
-  box-shadow: 0 0 14px rgba(255, 255, 255, 0.22);
 }
 
 .service-title-area {

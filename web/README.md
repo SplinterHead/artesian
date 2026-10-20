@@ -3,6 +3,7 @@
 The management console and control center for Artesian.
 
 ## Features
+
 - **Real-time Telemetry & Active Downloads:** Cache hit ratio, bandwidth saved, active connection rates, and live downloads table with custom client badges (e.g., `Artesian`), mini progress bars, and clickable SteamDB depot links.
 - **Game Library & Interactive Filter Modal:** Manage watched titles. The Add Game modal turns into a live search filter input upon opening, offering keyboard navigation across hundreds of authentic owned games.
 - **Accounts & Modules Hub:** Authenticate with Steam via Connection Manager WebSockets and 2FA, configure Steam auto-updates, and view intercepted CDN domain patterns.

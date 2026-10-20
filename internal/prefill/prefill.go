@@ -476,11 +476,7 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 		if err != nil {
 			continue
 		}
-		if service == "epic" {
-			req.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
-		} else {
-			req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
-		}
+		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
 		req.Header.Set("X-Artesian-Prefill", "1")
 		req.Header.Set("X-Artesian-Loop", "1")
 
@@ -685,4 +681,3 @@ func (m *Manager) generateAppManifest(ctx context.Context, job *PrefillJob) *Dep
 		Chunks:     chunks,
 	}
 }
-

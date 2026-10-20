@@ -5,7 +5,9 @@
       <div class="card-header">
         <div>
           <h3>Cron Timers</h3>
-          <p class="section-subtitle">Automated background processes stored in SQLite and managed in real-time.</p>
+          <p class="section-subtitle">
+            Automated background processes stored in SQLite and managed in real-time.
+          </p>
         </div>
       </div>
 
@@ -23,22 +25,26 @@
           </thead>
           <tbody>
             <tr v-for="rule in schedulerRules" :key="rule.id">
-              <td><code>{{ rule.id }}</code></td>
-              <td><strong>{{ rule.name }}</strong></td>
-              
+              <td>
+                <code>{{ rule.id }}</code>
+              </td>
+              <td>
+                <strong>{{ rule.name }}</strong>
+              </td>
+
               <!-- Inline Editable Cron Expression Cell -->
               <td class="cron-cell" :class="{ 'is-editing': editingCronRuleId === rule.id }">
                 <!-- Display Mode (Pen icon appears on hover) -->
-                <div 
-                  v-if="editingCronRuleId !== rule.id" 
+                <div
+                  v-if="editingCronRuleId !== rule.id"
                   class="cron-display-wrap"
                   @click="startInlineEdit(rule)"
                   title="Click or hover pen to edit cron expression"
                 >
                   <code class="cron-code">{{ rule.cron_expression }}</code>
-                  <button 
-                    type="button" 
-                    class="btn-pen-hover" 
+                  <button
+                    type="button"
+                    class="btn-pen-hover"
                     title="Edit cron expression"
                     @click.stop="startInlineEdit(rule)"
                   >
@@ -48,29 +54,29 @@
 
                 <!-- Edit Mode (Input with Tick & Cross icons in the table row) -->
                 <div v-else class="cron-editor-wrap">
-                  <input 
+                  <input
                     ref="inlineInputRef"
-                    type="text" 
-                    class="form-control form-control-xs inline-cron-input" 
-                    v-model="inlineCronInput" 
+                    type="text"
+                    class="form-control form-control-xs inline-cron-input"
+                    v-model="inlineCronInput"
                     @keydown.enter.prevent="saveInlineEdit(rule)"
                     @keydown.esc.prevent="cancelInlineEdit"
                     placeholder="0 */10 * * * *"
                   />
                   <div class="inline-actions">
-                    <button 
-                      type="button" 
-                      class="inline-btn save-btn" 
-                      title="Save (Enter)" 
+                    <button
+                      type="button"
+                      class="inline-btn save-btn"
+                      title="Save (Enter)"
                       :disabled="!inlineCronInput.trim()"
                       @click="saveInlineEdit(rule)"
                     >
                       <i class="fa-solid fa-check"></i>
                     </button>
-                    <button 
-                      type="button" 
-                      class="inline-btn cancel-btn" 
-                      title="Discard (Esc)" 
+                    <button
+                      type="button"
+                      class="inline-btn cancel-btn"
+                      title="Discard (Esc)"
                       @click="cancelInlineEdit"
                     >
                       <i class="fa-solid fa-xmark"></i>
@@ -81,8 +87,8 @@
 
               <td class="text-muted">{{ formatDate(rule.next_run) }}</td>
               <td>
-                <span 
-                  class="badge clickable-badge" 
+                <span
+                  class="badge clickable-badge"
                   :class="rule.enabled ? 'badge-hit' : 'badge-miss'"
                   title="Click to toggle Active/Paused"
                   @click="toggleRuleState(rule)"
@@ -106,7 +112,9 @@
       <div class="card-header">
         <div>
           <h3>Update Log</h3>
-          <p class="section-subtitle">Persistent log of game updates and patches discovered by Artesian for managed games.</p>
+          <p class="section-subtitle">
+            Persistent log of game updates and patches discovered by Artesian for managed games.
+          </p>
         </div>
         <div class="header-actions">
           <button class="btn btn-secondary btn-sm" @click="$emit('check-updates')">
@@ -130,11 +138,14 @@
           <tbody>
             <tr v-for="log in updateLogs" :key="log.id || log.discovered_at + log.app_id">
               <td>
-                <span class="service-pill" :class="`pill-${(log.service || 'steam').toLowerCase()}`">
-                  <svg 
-                    v-if="platformLogos[(log.service || 'steam').toLowerCase()]" 
-                    class="service-pill-svg" 
-                    :viewBox="platformLogos[(log.service || 'steam').toLowerCase()].viewBox" 
+                <span
+                  class="service-pill"
+                  :class="`pill-${(log.service || 'steam').toLowerCase()}`"
+                >
+                  <svg
+                    v-if="platformLogos[(log.service || 'steam').toLowerCase()]"
+                    class="service-pill-svg"
+                    :viewBox="platformLogos[(log.service || 'steam').toLowerCase()].viewBox"
                     fill="currentColor"
                   >
                     <path :d="platformLogos[(log.service || 'steam').toLowerCase()].path" />
@@ -143,21 +154,32 @@
                   {{ formatStore(log.service || 'steam') }}
                 </span>
               </td>
-              <td><strong>{{ log.game_title || log.name || 'Unknown Title' }}</strong></td>
-              <td><code>{{ log.app_id }}</code></td>
+              <td>
+                <strong>{{ log.game_title || log.name || 'Unknown Title' }}</strong>
+              </td>
+              <td>
+                <code>{{ log.app_id }}</code>
+              </td>
               <td>
                 <span class="badge" :class="getStatusBadgeClass(log.status)">
                   {{ (log.status || 'Verified').toUpperCase() }}
                 </span>
               </td>
-              <td class="text-muted whitespace-nowrap">{{ formatDate(log.discovered_at || log.timestamp) }}</td>
-              <td class="update-message-col">{{ log.message || 'Update check verified depot manifests.' }}</td>
+              <td class="text-muted whitespace-nowrap">
+                {{ formatDate(log.discovered_at || log.timestamp) }}
+              </td>
+              <td class="update-message-col">
+                {{ log.message || 'Update check verified depot manifests.' }}
+              </td>
             </tr>
           </tbody>
         </table>
         <div v-else class="empty-state p-4 text-center">
           <i class="fa-solid fa-clock-rotate-left fa-2x mb-2 text-muted"></i>
-          <p class="mb-0">No updates discovered yet. Artesian checks managed games according to the Cron Timers above.</p>
+          <p class="mb-0">
+            No updates discovered yet. Artesian checks managed games according to the Cron Timers
+            above.
+          </p>
         </div>
       </div>
     </div>
@@ -177,17 +199,17 @@
         <div class="form-group mb-3">
           <label class="form-label">Task State:</label>
           <div class="toggle-group">
-            <button 
-              type="button" 
-              class="btn btn-sm" 
+            <button
+              type="button"
+              class="btn btn-sm"
               :class="formEnabled ? 'btn-primary' : 'btn-outline-secondary'"
               @click="formEnabled = true"
             >
               <i class="fa-solid fa-play mr-1"></i> Active (Enabled)
             </button>
-            <button 
-              type="button" 
-              class="btn btn-sm" 
+            <button
+              type="button"
+              class="btn btn-sm"
               :class="!formEnabled ? 'btn-danger' : 'btn-outline-secondary'"
               @click="formEnabled = false"
             >
@@ -216,14 +238,16 @@
         <!-- Direct Cron Expression Input -->
         <div class="form-group mb-3">
           <label class="form-label">Cron Expression:</label>
-          <input 
-            type="text" 
-            class="form-control font-mono" 
-            v-model="formCron" 
+          <input
+            type="text"
+            class="form-control font-mono"
+            v-model="formCron"
             placeholder="0 */10 * * * *"
           />
           <small class="form-helper text-muted">
-            Format: <code>sec min hour day month dow</code> (e.g. <code>0 */10 * * * *</code> for every 10 min, or <code>0 0 3 * * *</code> for daily at 3 AM). Standard 5-field cron is also supported.
+            Format: <code>sec min hour day month dow</code> (e.g. <code>0 */10 * * * *</code> for
+            every 10 min, or <code>0 0 3 * * *</code> for daily at 3 AM). Standard 5-field cron is
+            also supported.
           </small>
         </div>
 
@@ -236,7 +260,12 @@
         <button type="button" class="btn btn-outline-secondary" @click="showEditModal = false">
           Cancel
         </button>
-        <button type="button" class="btn btn-primary" :disabled="!formCron.trim()" @click="saveRule">
+        <button
+          type="button"
+          class="btn btn-primary"
+          :disabled="!formCron.trim()"
+          @click="saveRule"
+        >
           <i class="fa-solid fa-check mr-1"></i> Save Schedule
         </button>
       </template>
@@ -261,10 +290,7 @@ defineProps({
   },
 });
 
-const emit = defineEmits([
-  'check-updates',
-  'save-rule',
-]);
+const emit = defineEmits(['check-updates', 'save-rule']);
 
 const showEditModal = ref(false);
 const editingRule = ref(null);
@@ -344,11 +370,6 @@ function saveRule() {
     enabled: formEnabled.value,
   });
   showEditModal.value = false;
-}
-
-function capitalize(s) {
-  if (!s) return '';
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function getStatusBadgeClass(status) {
@@ -470,13 +491,6 @@ function getStatusBadgeClass(status) {
   box-shadow: 0 1px 4px rgba(102, 192, 244, 0.15);
 }
 
-.pill-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.15), rgba(20, 20, 20, 0.9));
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 0 1px 4px rgba(255, 255, 255, 0.08);
-}
-
 /* Inline Editable Cron Cell Styles */
 .cron-cell {
   position: relative;
@@ -490,7 +504,9 @@ function getStatusBadgeClass(status) {
   padding: 0.2rem 0.4rem;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
   border: 1px solid transparent;
 }
 
@@ -518,7 +534,11 @@ function getStatusBadgeClass(status) {
   cursor: pointer;
   opacity: 0;
   transform: scale(0.85);
-  transition: opacity 0.15s ease, transform 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
 }
 
 .cron-display-wrap:hover .btn-pen-hover {
@@ -602,7 +622,9 @@ function getStatusBadgeClass(status) {
 .clickable-badge {
   cursor: pointer;
   user-select: none;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .clickable-badge:hover {
