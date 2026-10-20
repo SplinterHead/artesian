@@ -110,7 +110,7 @@ func ParseSteamChunkExtract(path string) (int64, string, bool) {
 	return 0, "", false
 }
 
-var epicChunkRegex = regexp.MustCompile(`([0-9a-fA-F]{16}_[0-9a-fA-F]{32})\.chunk`)
+var epicChunkRegex = regexp.MustCompile(`([0-9a-fA-F_]{32,64})\.chunk`)
 
 // ParseEpicChunkExtract extracts chunkID if URL is an Epic Games chunk
 func ParseEpicChunkExtract(path string) (string, bool) {

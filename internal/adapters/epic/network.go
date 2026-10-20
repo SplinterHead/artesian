@@ -2,6 +2,7 @@ package epic
 
 import (
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,11 +39,17 @@ func (a *Adapter) Domains() []string {
 // MatchesHost determines if the given host belongs to an Epic Games CDN distribution host
 func (a *Adapter) MatchesHost(host string) bool {
 	host = strings.ToLower(host)
+	if strings.Contains(host, ":") {
+		host = strings.Split(host, ":")[0]
+	}
 
-	// Direct match against known hosts
+	// Direct match against known hosts and CDN suffixes
 	if host == "download.epicgames.com" ||
 		host == "fastly-download.epicgames.com" ||
-		strings.HasSuffix(host, ".download.epicgames.com") {
+		host == "egdownload.fastly-edge.com" ||
+		strings.HasSuffix(host, ".download.epicgames.com") ||
+		strings.HasSuffix(host, ".epicgamescdn.com") ||
+		strings.HasSuffix(host, ".unrealengine.com") {
 		return true
 	}
 
@@ -51,14 +58,24 @@ func (a *Adapter) MatchesHost(host string) bool {
 		return true
 	}
 
+	// Match cdn*.epicgames.com or download*.epicgames.com
+	if (strings.HasPrefix(host, "cdn") || strings.HasPrefix(host, "download")) && strings.HasSuffix(host, ".epicgames.com") {
+		return true
+	}
+
 	for _, pattern := range a.domains {
+		if pattern == host {
+			return true
+		}
 		if strings.HasPrefix(pattern, "*.") {
 			suffix := strings.TrimPrefix(pattern, "*")
 			if strings.HasSuffix(host, suffix) {
 				return true
 			}
-		} else if host == pattern {
-			return true
+		} else if strings.Contains(pattern, "*") {
+			if matched, _ := filepath.Match(pattern, host); matched {
+				return true
+			}
 		}
 	}
 

@@ -11,12 +11,14 @@ import (
 )
 
 var (
-	epicChunkRegex = regexp.MustCompile(`([0-9a-fA-F]{16}_[0-9a-fA-F]{32})\.chunk`)
+	epicChunkRegex = regexp.MustCompile(`([0-9a-fA-F_]{32,64})\.chunk`)
 )
 
 // GetCDNHosts returns known high-speed Epic Games CDN hosts
 func (a *Adapter) GetCDNHosts() []string {
 	return []string{
+		"cloudflare.epicgamescdn.com",
+		"egs-cloudfront-chunks.epicgamescdn.com",
 		"epicgames-download1.akamaized.net",
 		"download.epicgames.com",
 		"fastly-download.epicgames.com",
@@ -46,7 +48,15 @@ func (a *Adapter) BuildChunkURL(host string, depotID int64, chunkHash string) st
 func (a *Adapter) ParseChunkKey(cacheKey string) (int64, string, bool) {
 	matches := epicChunkRegex.FindStringSubmatch(cacheKey)
 	if len(matches) == 2 {
-		return 0, strings.ToUpper(matches[1]), true
+		chunkID := strings.ToUpper(matches[1])
+		if a.db != nil {
+			var appID int64
+			err := a.db.QueryRow("SELECT depot_id FROM depot_manifest_chunks WHERE chunk_id = ? LIMIT 1", chunkID).Scan(&appID)
+			if err == nil && appID > 0 {
+				return appID, chunkID, true
+			}
+		}
+		return 0, chunkID, true
 	}
 	return 0, "", false
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -96,13 +97,18 @@ func (i *Interceptor) Matches(domain string) bool {
 	cleaned := strings.TrimSuffix(strings.ToLower(domain), ".")
 	for _, pattern := range i.patterns {
 		pattern = strings.ToLower(pattern)
+		if pattern == cleaned {
+			return true
+		}
 		if strings.HasPrefix(pattern, "*.") {
 			suffix := strings.TrimPrefix(pattern, "*")
 			if strings.HasSuffix(cleaned, suffix) || cleaned == strings.TrimPrefix(pattern, "*.") {
 				return true
 			}
-		} else if pattern == cleaned {
-			return true
+		} else if strings.Contains(pattern, "*") {
+			if matched, _ := filepath.Match(pattern, cleaned); matched {
+				return true
+			}
 		}
 	}
 	return false
@@ -192,6 +198,13 @@ func (s *Server) handleQuery(clientAddr net.Addr, packet []byte) {
 		if len(resp) > 0 {
 			_, _ = s.conn.WriteTo(resp, clientAddr)
 			return
+		}
+	}
+
+	if isQuery {
+		dLower := strings.ToLower(domain)
+		if strings.Contains(dLower, "epic") || strings.Contains(dLower, "steam") || strings.Contains(dLower, "akamaized") || strings.Contains(dLower, "unreal") || strings.Contains(dLower, "fastly") {
+			log.Printf("[Artesian DNS -> Forwarded] %s queried %s (not in intercept list)", clientAddr.String(), domain)
 		}
 	}
 

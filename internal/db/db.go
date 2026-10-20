@@ -241,6 +241,7 @@ func (db *DB) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_manifest_chunks_depot ON depot_manifest_chunks(depot_id);
+	CREATE INDEX IF NOT EXISTS idx_manifest_chunks_chunk ON depot_manifest_chunks(chunk_id);
 
 	CREATE TABLE IF NOT EXISTS game_meta_cache (
 		id TEXT PRIMARY KEY,
