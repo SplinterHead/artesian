@@ -203,9 +203,14 @@ func (s *Scheduler) checkAppUpdate(app db.WatchedApp) {
 		return
 	}
 
+	svcPrefix := adapter.DisplayName()
+	if adapter.ID() == "epic" {
+		svcPrefix = "Epic"
+	}
+
 	check, err := adapter.CheckAppUpdate(app.AppID, app.ChangeNumber)
 	if err != nil {
-		log.Printf("[%s Update Check] Network or API check failed for %s: %v", adapter.DisplayName(), app.Name, err)
+		log.Printf("[%s Update Check] Network or API check failed for %s: %v", svcPrefix, app.Name, err)
 		return
 	}
 
@@ -215,19 +220,19 @@ func (s *Scheduler) checkAppUpdate(app db.WatchedApp) {
 			app.ChangeNumber = check.NewChangeNumber
 			_ = s.db.UpsertWatchedApp(app)
 		}
-		log.Printf("[%s Update Check] Baseline recorded for %s (Change #%d)", adapter.DisplayName(), app.Name, check.NewChangeNumber)
+		log.Printf("[%s Update Check] Baseline recorded for %s (Change #%d)", svcPrefix, app.Name, check.NewChangeNumber)
 		return
 	}
 
 	if !check.Updated {
 		// Silently drop checks that resulted in no change
-		log.Printf("[%s Update Check] %s is up to date (Change #%d). Check completed with no changes.", adapter.DisplayName(), app.Name, app.ChangeNumber)
+		log.Printf("[%s Update Check] %s is up to date (Change #%d). Check completed with no changes.", svcPrefix, app.Name, app.ChangeNumber)
 		return
 	}
 
 	// Update discovered!
-	log.Printf("[%s Update Check] UPDATE DETECTED for %s: Change #%d -> #%d (Manifest changed: %v)",
-		adapter.DisplayName(), app.Name, app.ChangeNumber, check.NewChangeNumber, check.ManifestChanged)
+	log.Printf("[%s Update Check] UPDATE DETECTED for %s (App %d): Change #%d -> #%d (Manifest changed: %v)",
+		svcPrefix, app.Name, app.AppID, app.ChangeNumber, check.NewChangeNumber, check.ManifestChanged)
 
 	// Update watched_apps
 	app.ChangeNumber = check.NewChangeNumber

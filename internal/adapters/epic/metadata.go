@@ -242,7 +242,7 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 		}
 	}
 
-	log.Printf("[Epic Metadata] Downloading manifest for %s from %s...", info.Title, manifestURI)
+	log.Printf("[Epic Metadata] Downloading manifest for %s (App ID %d) from %s...", info.Title, appID, manifestURI)
 
 	// Download the .manifest file via cdnHTTPClient (direct DNS)
 	mReq, mErr := http.NewRequest("GET", manifestDownloadURL, nil)
@@ -339,8 +339,8 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 		}
 	}
 
-	log.Printf("[Epic Metadata] Successfully parsed and cached manifest for %s (%d chunks, %d bytes)",
-		info.Title, len(parsed.Chunks), parsed.TotalSize)
+	log.Printf("[Epic Metadata] Successfully parsed and cached manifest for %s (App ID %d, %d chunks, %d bytes)",
+		info.Title, appID, len(parsed.Chunks), parsed.TotalSize)
 
 	return nil
 }

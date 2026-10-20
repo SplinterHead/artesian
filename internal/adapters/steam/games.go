@@ -412,7 +412,7 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 		hint = "Only recent games are visible because your Steam Profile 'Game Details' is set to Friends Only. Connect with your Steam Account in Accounts & Modules to load your full library directly."
 	}
 
-	log.Printf("[Steam Games] Built dynamic game list for %s: found %d games (full_library: %v)", username, len(results), fullLibraryLoaded)
+	log.Printf("[Steam Library] Retrieved %d owned games from genuine library for %s", len(results), username)
 	return &ports.AccountGamesResult{
 		Games:             results,
 		TotalFound:        len(results),

@@ -200,7 +200,7 @@ func (a *Adapter) Login(codeOrInput, password string) error {
 		_ = a.db.SetServiceAutoUpdate(a.ID(), true)
 	}
 
-	log.Printf("[Epic Auth] Successfully authenticated account '%s' (Account ID: %s)", username, tokenResp.AccountID)
+	log.Printf("[Epic Auth] Authentication successful! Established session for %s (Account ID: %s)", username, tokenResp.AccountID)
 	a.broadcastStatus()
 	return nil
 }
@@ -267,7 +267,7 @@ func (a *Adapter) refreshAccessTokenLocked() error {
 		_ = a.db.SaveAuthSession(sess)
 	}
 
-	log.Printf("[Epic Auth] Refreshed access token successfully for '%s'", a.username)
+	log.Printf("[Epic Auth] Refreshed access token successfully for %s", a.username)
 	return nil
 }
 
@@ -289,25 +289,25 @@ func (a *Adapter) restoreSavedSession() {
 	a.state = ports.StateConnecting
 	a.authMu.Unlock()
 
-	log.Printf("[Epic Auth] Restoring saved session for '%s'...", sess.Username)
-
 	// Refresh token in background to verify active session
 	go func() {
 		a.authMu.Lock()
 		err := a.refreshAccessTokenLocked()
 		username := a.username
+		accountID := a.accountID
 		a.authMu.Unlock()
 
 		if err != nil {
 			log.Printf("[Epic Auth] Could not restore saved session: %v", err)
 		} else {
-			log.Printf("[Epic Auth] Restored genuine Epic Games session for %s", username)
+			log.Printf("[Epic Auth] Restored genuine Epic Games session for %s (Account ID: %s)", username, accountID)
 		}
 		a.broadcastStatus()
 	}()
 }
 
 func (a *Adapter) failLogin(msg string) {
+	log.Printf("[Epic Auth] Login error: %s", msg)
 	a.authMu.Lock()
 	a.state = ports.StateError
 	a.errorMessage = msg
@@ -318,6 +318,7 @@ func (a *Adapter) failLogin(msg string) {
 // Logout clears stored Epic Games credentials and marks session inactive
 func (a *Adapter) Logout() error {
 	a.authMu.Lock()
+	username := a.username
 	a.state = ports.StateDisconnected
 	a.username = ""
 	a.accountID = ""
@@ -330,7 +331,7 @@ func (a *Adapter) Logout() error {
 		_ = a.db.ClearAuthSession(a.ID())
 	}
 
-	log.Println("[Epic Auth] Epic Games account disconnected")
+	log.Printf("[Epic Auth] Session cleared for %s", username)
 	a.broadcastStatus()
 	return nil
 }

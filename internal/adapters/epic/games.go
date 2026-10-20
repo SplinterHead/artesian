@@ -302,7 +302,14 @@ func (a *Adapter) GetOwnedGames() (*ports.AccountGamesResult, error) {
 		return strings.ToLower(discoveredGames[i].Name) < strings.ToLower(discoveredGames[j].Name)
 	})
 
-	log.Printf("[Epic Games] Retrieved %d owned games from genuine library", len(discoveredGames))
+	a.authMu.RLock()
+	username := a.username
+	a.authMu.RUnlock()
+	if username == "" {
+		username = "user"
+	}
+
+	log.Printf("[Epic Library] Retrieved %d owned games from genuine library for %s", len(discoveredGames), username)
 
 	return &ports.AccountGamesResult{
 		Games:             discoveredGames,

@@ -525,13 +525,13 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[Depot Meta] Error fetching SteamCMD info for app %d: %v", appID, err)
+		log.Printf("[Steam Metadata] Error fetching SteamCMD info for app %d: %v", appID, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[Depot Meta] SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
+		log.Printf("[Steam Metadata] SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
 		return fmt.Errorf("SteamCMD API returned HTTP %d for app %d", resp.StatusCode, appID)
 	}
 
@@ -551,7 +551,7 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&steamCmdData); err != nil {
-		log.Printf("[Depot Meta] Failed to decode SteamCMD JSON for app %d: %v", appID, err)
+		log.Printf("[Steam Metadata] Failed to decode SteamCMD JSON for app %d: %v", appID, err)
 		return err
 	}
 
@@ -646,6 +646,9 @@ func (a *Adapter) FetchAppInfo(appID int64) error {
 			})
 		}
 	}
+
+	log.Printf("[Steam Metadata] Successfully parsed and cached metadata for %s (App ID %d, %d depots)",
+		gameTitle, appID, len(appData.Depots))
 
 	return nil
 }

@@ -668,6 +668,7 @@ func (a *Adapter) Logout() error {
 		a.cancelPoll()
 		a.cancelPoll = nil
 	}
+	username := a.username
 	a.state = ports.StateDisconnected
 	a.username = ""
 	a.steamID = ""
@@ -685,6 +686,7 @@ func (a *Adapter) Logout() error {
 		_ = a.db.ClearAuthSession(a.ID())
 	}
 
+	log.Printf("[Steam Auth] Session cleared for %s", username)
 	a.broadcastStatus()
 	return nil
 }
