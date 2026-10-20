@@ -7,9 +7,6 @@ import (
 	"artesian/internal/ports"
 )
 
-// Service is an alias for ports.PlatformAdapter
-type Service = ports.PlatformAdapter
-
 // Registry manages available game platform adapters
 type Registry struct {
 	adapters map[string]ports.PlatformAdapter

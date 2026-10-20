@@ -91,7 +91,7 @@ type dbLogEntry struct {
 type proxyReqContextKey struct{}
 
 type proxyContextData struct {
-	service     services.Service
+	service     ports.PlatformAdapter
 	serviceName string
 	cacheKey    string
 	canCache    bool
@@ -106,7 +106,10 @@ func FormatStoreName(service string) string {
 	if strings.EqualFold(service, "steam") {
 		return "Steam"
 	}
-	return strings.Title(service)
+	if len(service) == 0 {
+		return service
+	}
+	return strings.ToUpper(service[:1]) + strings.ToLower(service[1:])
 }
 
 
@@ -436,7 +439,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 	s.passThrough(w, req, service, serviceName, cacheKey, start, canCache)
 }
 
-func (s *Server) passThrough(w http.ResponseWriter, req *http.Request, svc services.Service, serviceName, cacheKey string, start time.Time, canCache bool) {
+func (s *Server) passThrough(w http.ResponseWriter, req *http.Request, svc ports.PlatformAdapter, serviceName, cacheKey string, start time.Time, canCache bool) {
 	ctxData := &proxyContextData{
 		service:     svc,
 		serviceName: serviceName,

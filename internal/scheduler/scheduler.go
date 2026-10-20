@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"artesian/internal/config"
 	"artesian/internal/db"
 	"artesian/internal/prefill"
 	"artesian/internal/services"
@@ -31,7 +30,6 @@ type Rule struct {
 
 // Scheduler coordinates cron jobs and Steam game update checks
 type Scheduler struct {
-	cfg      config.SchedulerConfig
 	db       *db.DB
 	prefill  *prefill.Manager
 	registry *services.Registry
@@ -44,9 +42,8 @@ type Scheduler struct {
 }
 
 // NewScheduler initializes the cron and update check engine
-func NewScheduler(cfg config.SchedulerConfig, database *db.DB, pf *prefill.Manager, reg *services.Registry) *Scheduler {
+func NewScheduler(database *db.DB, pf *prefill.Manager, reg *services.Registry) *Scheduler {
 	s := &Scheduler{
-		cfg:      cfg,
 		db:       database,
 		prefill:  pf,
 		registry: reg,

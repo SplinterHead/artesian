@@ -8,31 +8,25 @@ import (
 	"artesian/internal/db"
 )
 
-// Config encapsulates all configuration options for Artesian
+// Config encapsulates active configuration options for Artesian
 type Config struct {
-	Server    ServerConfig    `json:"server"`
-	DNS       DNSConfig       `json:"dns"`
-	Proxy     ProxyConfig     `json:"proxy"`
-	Cache     CacheConfig     `json:"cache"`
-	Database  DatabaseConfig  `json:"database"`
-	Services  ServicesConfig  `json:"services"`
-	Scheduler SchedulerConfig `json:"scheduler"`
+	Server ServerConfig `json:"server"`
+	DNS    DNSConfig    `json:"dns"`
+	Proxy  ProxyConfig  `json:"proxy"`
+	Cache  CacheConfig  `json:"cache"`
 }
 
 // ServerConfig defines the web management UI & API settings
 type ServerConfig struct {
 	ListenAddr string `json:"listen_addr"` // e.g. ":8080"
-	EnableAuth bool   `json:"enable_auth"`
-	APIKey     string `json:"api_key"`
 }
 
 // DNSConfig controls the embedded DNS forwarder and interception rules
 type DNSConfig struct {
 	Enabled       bool     `json:"enabled"`
-	ListenAddr    string   `json:"listen_addr"`       // e.g. ":53"
-	UpstreamDNS   []string `json:"upstream_dns"`     // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
+	ListenAddr    string   `json:"listen_addr"`    // e.g. ":53"
+	UpstreamDNS   []string `json:"upstream_dns"`  // e.g. ["1.1.1.1:53", "8.8.8.8:53"]
 	InterceptIPv4 string   `json:"intercept_ipv4"` // Target proxy IP address
-	InterceptIPv6 string   `json:"intercept_ipv6"`
 }
 
 // ProxyConfig defines the HTTP reverse proxy parameters
@@ -50,32 +44,6 @@ type CacheConfig struct {
 	DepotCacheDir string `json:"depotcache_dir"` // e.g. "/data/steam_depotcache"
 	MaxSizeBytes  int64  `json:"max_size_bytes"`
 	MinFreeDisk   int64  `json:"min_free_disk_bytes"`
-	ChunkSize     int64  `json:"chunk_size_bytes"`
-}
-
-// DatabaseConfig specifies the SQLite persistence database
-type DatabaseConfig struct {
-	Path string `json:"path"` // e.g. "/data/artesian.db"
-}
-
-// ServicesConfig lists enabled game platforms
-type ServicesConfig struct {
-	Steam ServiceSettings `json:"steam"`
-}
-
-// ServiceSettings controls a specific platform's behavior
-type ServiceSettings struct {
-	Enabled      bool     `json:"enabled"`
-	Domains      []string `json:"domains"`
-	AutoUpdate   bool     `json:"auto_update"`
-	PrefillHours int      `json:"prefill_hours"`
-}
-
-// SchedulerConfig controls periodic tasks and cron timers
-type SchedulerConfig struct {
-	Enabled       bool   `json:"enabled"`
-	UpdateCron    string `json:"update_cron"`       // e.g. "0 */10 * * * *"
-	CacheSyncCron string `json:"cache_sync_cron"` // e.g. "0 0 3 * * *"
 }
 
 // DefaultConfig returns safe out-of-the-box defaults
@@ -83,7 +51,6 @@ func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
 			ListenAddr: ":8080",
-			EnableAuth: false,
 		},
 		DNS: DNSConfig{
 			Enabled:       true,
@@ -103,28 +70,6 @@ func DefaultConfig() *Config {
 			DepotCacheDir: "/data/steam_depotcache",
 			MaxSizeBytes:  2 * 1024 * 1024 * 1024 * 1024, // 2 TB
 			MinFreeDisk:   50 * 1024 * 1024 * 1024,       // 50 GB
-			ChunkSize:     1024 * 1024,                   // 1 MB
-		},
-		Database: DatabaseConfig{
-			Path: "/data/artesian.db",
-		},
-		Services: ServicesConfig{
-			Steam: ServiceSettings{
-				Enabled: true,
-				Domains: []string{
-					"*.cs.steampowered.com",
-					"*.content.steampowered.com",
-					"*.hsar.steampowered.com",
-					"content*.steampowered.com",
-					"*.steamcontent.com",
-				},
-				AutoUpdate: true,
-			},
-		},
-		Scheduler: SchedulerConfig{
-			Enabled:       true,
-			UpdateCron:    "0 */10 * * * *", // Every 10 minutes
-			CacheSyncCron: "0 0 3 * * *",    // 3 AM daily
 		},
 	}
 }
@@ -186,17 +131,6 @@ func LoadFromDB(database *db.DB) *Config {
 			cfg.Cache.MinFreeDisk = v
 		}
 	}
-	if chunkSize := database.GetSetting("cache_chunk_size", ""); chunkSize != "" {
-		if v, err := strconv.ParseInt(chunkSize, 10, 64); err == nil && v > 0 {
-			cfg.Cache.ChunkSize = v
-		}
-	}
-	if schedEnabled := database.GetSetting("scheduler_enabled", ""); schedEnabled != "" {
-		cfg.Scheduler.Enabled = (schedEnabled == "true" || schedEnabled == "1")
-	}
-
-	cfg.Services.Steam.AutoUpdate = database.GetServiceAutoUpdate("steam")
 
 	return cfg
 }
-

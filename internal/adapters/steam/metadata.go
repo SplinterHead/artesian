@@ -67,7 +67,10 @@ func FormatPlatform(oslist, osarch, userAgent string) string {
 			}
 			return "Linux 64bit"
 		}
-		return strings.Title(oslist)
+		if len(oslist) > 0 {
+			return strings.ToUpper(oslist[:1]) + strings.ToLower(oslist[1:])
+		}
+		return oslist
 	}
 
 	return "PC"

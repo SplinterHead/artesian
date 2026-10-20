@@ -62,13 +62,6 @@ func (a *Adapter) Status() ports.AuthStatus {
 	}
 }
 
-// GetSessionCookies returns stored steam cookies (e.g. steamLoginSecure)
-func (a *Adapter) GetSessionCookies() string {
-	a.authMu.RLock()
-	defer a.authMu.RUnlock()
-	return a.sessionCookies
-}
-
 // GetAccessToken returns authenticated OAuth access token
 func (a *Adapter) GetAccessToken() string {
 	a.authMu.RLock()

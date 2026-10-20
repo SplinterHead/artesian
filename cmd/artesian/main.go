@@ -60,28 +60,28 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	// 3. Load Configuration from SQLite Database Settings
 	cfg := config.LoadFromDB(database)
 
-	// 3. Initialize Storage Layer
+	// 4. Initialize Storage Layer
 	storage, err := cache.NewStorage(cfg.Cache)
 	if err != nil {
 		log.Fatalf("[Artesian] Cache storage error: %v", err)
 	}
 
-	// 4. Initialize Steam Adapter & Register with Service Registry
+	// 5. Initialize Steam Adapter & Register with Service Registry
 	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
 	registry := services.NewRegistry()
 	registry.Register(steamAdapter)
 	log.Println("[Artesian] Service registered: Steam")
 
-	// 5. Initialize Prefill & Scheduler Subsystems
+	// 6. Initialize Prefill & Scheduler Subsystems
 	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)
-	sched := scheduler.NewScheduler(cfg.Scheduler, database, prefillMgr, registry)
+	sched := scheduler.NewScheduler(database, prefillMgr, registry)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go sched.Start(ctx)
 
-	// 6. Launch DNS Interceptor & Forwarder
+	// 7. Launch DNS Interceptor & Forwarder
 	var dnsServer *dns.Server
 	if cfg.DNS.Enabled {
 		dnsServer = dns.NewServer(cfg.DNS, registry.AllDomains())
@@ -97,7 +97,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 		}
 	}
 
-	// 7. Launch HTTP Caching Reverse Proxy Engine
+	// 8. Launch HTTP Caching Reverse Proxy Engine
 	proxyServer := proxy.NewServer(cfg.Proxy, cfg.DNS, storage, database, registry)
 	prefillMgr.SetTrafficRecorder(proxyServer)
 	go func() {
@@ -107,7 +107,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	}()
 	defer proxyServer.Close()
 
-	// 8. Launch Web Management UI & REST API
+	// 9. Launch Web Management UI & REST API
 	apiServer := api.NewServer(cfg.Server, &cfg.DNS, dnsServer, storage, database, registry, prefillMgr, sched, proxyServer)
 	webHTTP := &http.Server{
 		Addr:         cfg.Server.ListenAddr,
@@ -123,7 +123,7 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 		}
 	}()
 
-	// 9. Graceful Shutdown
+	// 10. Graceful Shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
