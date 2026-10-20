@@ -4,6 +4,22 @@
     :title="resolvedTitle" 
     @update:model-value="$emit('update:modelValue', $event)"
   >
+    <template #header>
+      <div class="modal-title-with-logo">
+        <div class="modal-title-logo-box" :class="'store-logo-' + (service || 'generic')">
+          <svg 
+            v-if="platformLogos[service]" 
+            class="store-svg-logo" 
+            :viewBox="platformLogos[service].viewBox" 
+            fill="currentColor"
+          >
+            <path :d="platformLogos[service].path" />
+          </svg>
+          <i v-else class="fa-solid fa-gamepad fallback-logo-icon"></i>
+        </div>
+        <h3 class="modal-title-text">{{ resolvedTitle }}</h3>
+      </div>
+    </template>
     <!-- Mode A: Direct Username & Password Credentials (e.g. Steam) -->
     <div v-if="resolvedAuthType === 'credentials'" class="credentials-container">
       <div class="form-group mb-3">
@@ -105,6 +121,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
+import { platformLogos } from '../../utils/logos';
 import BaseModal from '../common/BaseModal.vue';
 
 const SERVICE_DEFAULTS = {
@@ -331,5 +348,48 @@ function handleSubmit() {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+}
+
+.modal-title-with-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.modal-title-logo-box {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.modal-title-logo-box .store-svg-logo {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.store-logo-steam {
+  background: radial-gradient(circle at top left, rgba(102, 192, 244, 0.25), rgba(23, 26, 38, 0.8));
+  color: #66c0f4;
+  border: 1px solid rgba(102, 192, 244, 0.35);
+  box-shadow: 0 2px 8px rgba(102, 192, 244, 0.15);
+}
+
+.store-logo-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(20, 20, 20, 0.85));
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.modal-title-text {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 </style>

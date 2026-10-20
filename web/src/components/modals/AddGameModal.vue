@@ -637,7 +637,7 @@ function handleSubmit() {
 
 /* Service Colors */
 .store-bg-steam { color: #66c0f4; }
-.store-bg-epic { color: #f2f2f2; }
+.store-bg-epic { color: #ffffff; }
 
 /* Form Controls */
 .label-row {

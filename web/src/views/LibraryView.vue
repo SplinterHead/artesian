@@ -424,9 +424,16 @@ function getGameKey(game) {
 }
 
 .store-logo-epic {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.15), rgba(20, 20, 20, 0.8));
-  color: #f5f5f5;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(20, 20, 20, 0.85));
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.store-logo-epic:hover {
+  border-color: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.3);
+  color: #ffffff;
 }
 
 .store-logo-generic {

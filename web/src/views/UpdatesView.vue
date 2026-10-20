@@ -130,9 +130,17 @@
           <tbody>
             <tr v-for="log in updateLogs" :key="log.id || log.discovered_at + log.app_id">
               <td>
-                <span class="service-pill" :class="`pill-${log.service || 'steam'}`">
-                  <i class="fa-brands fa-steam mr-1"></i>
-                  {{ capitalize(log.service || 'steam') }}
+                <span class="service-pill" :class="`pill-${(log.service || 'steam').toLowerCase()}`">
+                  <svg 
+                    v-if="platformLogos[(log.service || 'steam').toLowerCase()]" 
+                    class="service-pill-svg" 
+                    :viewBox="platformLogos[(log.service || 'steam').toLowerCase()].viewBox" 
+                    fill="currentColor"
+                  >
+                    <path :d="platformLogos[(log.service || 'steam').toLowerCase()].path" />
+                  </svg>
+                  <i v-else class="fa-solid fa-gamepad mr-1"></i>
+                  {{ formatStore(log.service || 'steam') }}
                 </span>
               </td>
               <td><strong>{{ log.game_title || log.name || 'Unknown Title' }}</strong></td>
@@ -238,7 +246,8 @@
 
 <script setup>
 import { ref, nextTick } from 'vue';
-import { formatDate } from '../utils/formatters';
+import { formatDate, formatStore } from '../utils/formatters';
+import { platformLogos } from '../utils/logos';
 import BaseModal from '../components/common/BaseModal.vue';
 
 defineProps({
@@ -440,16 +449,32 @@ function getStatusBadgeClass(status) {
 .service-pill {
   display: inline-flex;
   align-items: center;
+  gap: 0.35rem;
   font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+  padding: 0.2rem 0.55rem;
   border-radius: 4px;
   font-weight: 600;
 }
 
+.service-pill-svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
 .pill-steam {
-  background: rgba(23, 26, 33, 0.8);
-  color: #c7d5e0;
-  border: 1px solid rgba(102, 192, 244, 0.3);
+  background: rgba(23, 26, 33, 0.85);
+  color: #66c0f4;
+  border: 1px solid rgba(102, 192, 244, 0.35);
+  box-shadow: 0 1px 4px rgba(102, 192, 244, 0.15);
+}
+
+.pill-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.15), rgba(20, 20, 20, 0.9));
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 1px 4px rgba(255, 255, 255, 0.08);
 }
 
 /* Inline Editable Cron Cell Styles */

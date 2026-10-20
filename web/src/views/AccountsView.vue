@@ -263,6 +263,19 @@ function getServiceStatusText(svc) {
   border-color: rgba(102, 192, 244, 0.25);
 }
 
+.service-icon-box.icon-epic {
+  color: #ffffff;
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.18), rgba(15, 23, 42, 0.95));
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.service-icon-box.icon-epic:hover {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.28), rgba(30, 41, 59, 0.95));
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.22);
+}
+
 .service-title-area {
   flex: 1;
   min-width: 0;

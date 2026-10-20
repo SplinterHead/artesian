@@ -55,7 +55,9 @@ export function formatChunkID(id) {
 }
 
 export function formatStore(service) {
-  if ((service || '').toLowerCase() === 'steam') return 'Steam';
+  const s = (service || '').toLowerCase();
+  if (s === 'steam') return 'Steam';
+  if (s === 'epic') return 'Epic Games';
   return service ? service.toUpperCase() : 'Steam';
 }
 
@@ -64,6 +66,7 @@ export function getLogoKey(service, store) {
   if (platformLogos[s]) return s;
   const st = (store || '').toLowerCase();
   if (st.includes('steam')) return 'steam';
+  if (st.includes('epic')) return 'epic';
   return 'steam';
 }
 
