@@ -2,8 +2,10 @@ package steam
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,29 +57,39 @@ var (
 	_ ports.PlatformAdapter = (*Adapter)(nil)
 )
 
-// NewAdapter creates and initializes the Steam adapter
-func NewAdapter(database *db.DB, storage *cache.Storage, dnsCfg *config.DNSConfig) *Adapter {
-	// Standard HTTP client for API endpoints
-	baseHTTPClient := &http.Client{
-		Timeout: 20 * time.Second,
-	}
-
-	// CDN HTTP client configured with direct upstream DNS resolution to prevent loopbacks
-	var cdnTransport *http.Transport
+func createUpstreamTransport(dnsCfg *config.DNSConfig) *http.Transport {
 	if dnsCfg != nil && len(dnsCfg.UpstreamDNS) > 0 {
-		upstreamServer := dnsCfg.UpstreamDNS[0]
+		upstreams := dnsCfg.UpstreamDNS
 		dialer := &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 			Resolver: &net.Resolver{
 				PreferGo: true,
 				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					d := net.Dialer{Timeout: 5 * time.Second}
-					return d.DialContext(ctx, "udp", upstreamServer)
+					var lastErr error
+					for _, u := range upstreams {
+						target := strings.TrimSpace(u)
+						if target == "" {
+							continue
+						}
+						if !strings.Contains(target, ":") {
+							target += ":53"
+						}
+						d := net.Dialer{Timeout: 3 * time.Second}
+						conn, err := d.DialContext(ctx, "udp", target)
+						if err == nil {
+							return conn, nil
+						}
+						lastErr = err
+					}
+					if lastErr != nil {
+						return nil, lastErr
+					}
+					return nil, fmt.Errorf("no upstream DNS servers available")
 				},
 			},
 		}
-		cdnTransport = &http.Transport{
+		return &http.Transport{
 			DialContext:           dialer.DialContext,
 			ForceAttemptHTTP2:     false,
 			MaxIdleConns:          100,
@@ -85,18 +97,28 @@ func NewAdapter(database *db.DB, storage *cache.Storage, dnsCfg *config.DNSConfi
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
-	} else {
-		cdnTransport = &http.Transport{
-			ForceAttemptHTTP2:     false,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
 	}
 
+	return &http.Transport{
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// NewAdapter initializes the Steam platform adapter
+func NewAdapter(database *db.DB, storage *cache.Storage, dnsCfg *config.DNSConfig) *Adapter {
+	// Standard HTTP client for API endpoints using direct upstream DNS
+	baseHTTPClient := &http.Client{
+		Transport: createUpstreamTransport(dnsCfg),
+		Timeout:   20 * time.Second,
+	}
+
+	// CDN HTTP client configured with direct upstream DNS resolution to prevent loopbacks
 	cdnClient := &http.Client{
-		Transport: cdnTransport,
+		Transport: createUpstreamTransport(dnsCfg),
 		Timeout:   45 * time.Second,
 	}
 
