@@ -15,6 +15,7 @@ export const DEFAULT_SERVICES = [
     company: 'Valve',
     status: 'disconnected',
     intercept_enabled: true,
+    auto_update: true,
     username: '',
     domains: [
       '*.cs.steampowered.com',
@@ -31,6 +32,7 @@ export const DEFAULT_SERVICES = [
     company: 'Epic Games',
     status: 'disconnected',
     intercept_enabled: true,
+    auto_update: true,
     username: '',
     domains: [
       'epicgames-download*.akamaized.net',

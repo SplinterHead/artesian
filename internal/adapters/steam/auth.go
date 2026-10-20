@@ -636,6 +636,7 @@ func (a *Adapter) finalizeSession(refreshToken, accessToken, accountName string)
 			IsActive:     true,
 			UpdatedAt:    time.Now(),
 		})
+		_ = a.db.SetServiceAutoUpdate(a.ID(), true)
 	}
 
 	log.Printf("[Steam Auth] Authentication successful! Established session for %s (SteamID: %s)", a.username, a.steamID)

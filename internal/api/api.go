@@ -634,6 +634,10 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.db != nil && adapter.Status().HasValidAuth {
+		_ = s.db.SetServiceAutoUpdate(adapter.ID(), true)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": fmt.Sprintf("Connecting to %s authentication service...", adapter.DisplayName()),
 		"status":  adapter.Status(),
@@ -667,6 +671,10 @@ func (s *Server) handleAuth2FA(w http.ResponseWriter, r *http.Request) {
 	if err := adapter.Submit2FA(req.Code); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if s.db != nil && adapter.Status().HasValidAuth {
+		_ = s.db.SetServiceAutoUpdate(adapter.ID(), true)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

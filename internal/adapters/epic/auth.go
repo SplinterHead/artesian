@@ -197,6 +197,7 @@ func (a *Adapter) Login(codeOrInput, password string) error {
 			UpdatedAt:    time.Now(),
 		}
 		_ = a.db.SaveAuthSession(sess)
+		_ = a.db.SetServiceAutoUpdate(a.ID(), true)
 	}
 
 	log.Printf("[Epic Auth] Successfully authenticated account '%s' (Account ID: %s)", username, tokenResp.AccountID)

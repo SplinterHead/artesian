@@ -265,6 +265,7 @@ const { wsConnected } = useWebSocket({
       stm.username = data.username;
     }
     if (data.state === 'connected') {
+      if (stm) stm.auto_update = true;
       loggingIn.value = false;
       loginError.value = '';
       showLoginModal.value = false;
@@ -306,6 +307,7 @@ const { wsConnected } = useWebSocket({
       epc.username = data.username;
     }
     if (data.state === 'connected') {
+      if (epc) epc.auto_update = true;
       loggingIn.value = false;
       showLoginModal.value = false;
       loginError.value = '';
@@ -537,6 +539,7 @@ async function handlePlatformLogin(payload) {
         return;
       }
       if (data.status.state === 'connected') {
+        if (stm) stm.auto_update = true;
         loggingIn.value = false;
         showLoginModal.value = false;
         fetchLibrary();
@@ -565,6 +568,7 @@ async function handlePlatformLogin(payload) {
             show2FAModal.value = true;
           } else if (s.state === 'connected') {
             clearInterval(pollInterval);
+            if (stm) stm.auto_update = true;
             loggingIn.value = false;
             showLoginModal.value = false;
             fetchLibrary();
@@ -595,6 +599,7 @@ async function handlePlatformLogin(payload) {
         epc.username = res.status.username;
       }
       if (res.status?.state === 'connected') {
+        if (epc) epc.auto_update = true;
         showLoginModal.value = false;
         loggingIn.value = false;
         await fetchServices();
@@ -620,6 +625,8 @@ async function submit2FACode(code) {
   try {
     await api.submitSteam2FA(code);
     show2FAModal.value = false;
+    const stm = servicesList.value.find(s => s.id === 'steam');
+    if (stm) stm.auto_update = true;
     await fetchSteamStatus();
     await fetchServices();
     await fetchLibrary();
