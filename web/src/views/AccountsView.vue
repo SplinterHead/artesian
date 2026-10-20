@@ -103,7 +103,7 @@
             v-if="svc.status !== 'connected'" 
             class="btn btn-sm btn-primary btn-block" 
             :class="{ 'btn-awaiting-2fa': svc.status === 'awaiting_2fa' }"
-            @click="handleSteamButtonClick(svc)"
+            @click="handleConnectButtonClick(svc)"
           >
             <template v-if="svc.status === 'awaiting_2fa'">
               <i class="fa-solid fa-shield-halved mr-1"></i> Enter 2FA / Approve
@@ -112,11 +112,11 @@
               <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Connecting...
             </template>
             <template v-else>
-              Connect Steam Account
+              Connect {{ svc.display_name }} Account
             </template>
           </button>
           <div v-else class="connected-btn-group">
-            <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('logout-steam')">
+            <button class="btn btn-sm btn-outline-danger" :title="'Disconnect ' + svc.username" @click="$emit('logout-service', svc.id)">
               Disconnect ({{ svc.username }})
             </button>
             <button class="btn btn-sm btn-secondary" @click="$emit('switch-tab', 'library')">
@@ -145,12 +145,15 @@ const emit = defineEmits([
   'toggle-autoupdate',
   'open-steam-login', 
   'open-steam-2fa',
-  'logout-steam', 
+  'open-epic-login',
+  'logout-service',
   'switch-tab', 
 ]);
 
-function handleSteamButtonClick(svc) {
-  if (svc.status === 'awaiting_2fa') {
+function handleConnectButtonClick(svc) {
+  if (svc.id === 'epic') {
+    emit('open-epic-login');
+  } else if (svc.status === 'awaiting_2fa') {
     emit('open-steam-2fa');
   } else {
     emit('open-steam-login');

@@ -308,6 +308,7 @@ func (db *DB) seedDefaults() error {
 		"cache_chunk_size":             "1048576",       // 1 MB
 		"scheduler_enabled":            "true",
 		"service_steam_auto_update":    "true",
+		"service_epic_auto_update":     "true",
 	}
 
 	for k, v := range defaultSettings {
@@ -891,7 +892,7 @@ func (db *DB) GetInterceptedGames() ([]InterceptedGame, error) {
 			(SELECT g.name FROM game_meta_cache g WHERE g.service = sub.service AND g.app_id = sub.app_id AND g.name != '' LIMIT 1),
 			(SELECT d2.game_title FROM depot_meta_cache d2 WHERE d2.depot_id = sub.sample_depot AND d2.game_title != '' LIMIT 1),
 			(SELECT g2.name FROM game_meta_cache g2 WHERE g2.service = sub.service AND g2.name != '' LIMIT 1),
-			CASE WHEN sub.service = 'steam' AND sub.app_id > 0 THEN 'Steam App ' || sub.app_id ELSE 'Game Asset' END
+			CASE WHEN sub.service = 'steam' AND sub.app_id > 0 THEN 'Steam App ' || sub.app_id WHEN sub.service = 'epic' AND sub.app_id > 0 THEN 'Epic Game ' || sub.app_id ELSE 'Game Asset' END
 		) as name,
 		COALESCE(
 			(SELECT d.platform FROM depot_meta_cache d WHERE d.depot_id IN (SELECT c2.depot_id FROM chunk_cache c2 WHERE c2.app_id = sub.app_id OR c2.depot_id = sub.sample_depot) AND d.platform != '' LIMIT 1),

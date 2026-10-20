@@ -423,6 +423,12 @@ function getGameKey(game) {
   border: 1px solid rgba(102, 192, 244, 0.35);
 }
 
+.store-logo-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.15), rgba(20, 20, 20, 0.8));
+  color: #f5f5f5;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
 .store-logo-generic {
   background: rgba(148, 163, 184, 0.15);
   color: #94a3b8;

@@ -98,8 +98,15 @@
               </td>
               <td class="col-depot">
                 <div class="depots-container">
+                  <!-- Epic Games: Show depot/app ID badge without SteamDB link -->
+                  <template v-if="(d.service || '').toLowerCase() === 'epic'">
+                    <span v-if="d.depot_id" class="depot-link">
+                      <code>{{ d.depot_id }}</code>
+                    </span>
+                    <span v-else class="text-muted">—</span>
+                  </template>
                   <!-- Steam Depots: All depots for this game bundled as clickable badges -->
-                  <template v-if="d.depot_links && d.depot_links.length > 0">
+                  <template v-else-if="d.depot_links && d.depot_links.length > 0">
                     <a 
                       v-for="link in d.depot_links" 
                       :key="link.depot_id"
@@ -273,6 +280,19 @@ defineEmits(['clear-traffic']);
 .store-logo-steam:hover {
   border-color: rgba(102, 192, 244, 0.7);
   box-shadow: 0 4px 14px rgba(102, 192, 244, 0.35);
+  color: #ffffff;
+}
+
+.store-logo-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.15), rgba(20, 20, 20, 0.8));
+  color: #f5f5f5;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.store-logo-epic:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
   color: #ffffff;
 }
 

@@ -62,6 +62,8 @@
         @toggle-autoupdate="handleToggleServiceAutoUpdate"
         @open-steam-login="handleOpenSteamLogin"
         @open-steam-2fa="openSteam2FAModal"
+        @open-epic-login="openEpicLoginModal"
+        @logout-service="handleLogoutService"
         @logout-steam="logoutSteam"
         @switch-tab="currentTab = $event"
       />
@@ -83,6 +85,13 @@
       @submit="submit2FACode"
       @dismiss="show2FAModal = false"
       @switch-account="handleRestartSteamLogin"
+    />
+
+    <EpicLoginModal
+      v-model="showEpicLoginModal"
+      :loading="loggingInEpic"
+      :error-msg="epicLoginError"
+      @submit="handleEpicLogin"
     />
 
     <AddGameModal 
@@ -128,6 +137,7 @@ import AccountsView from './views/AccountsView.vue';
 // Modal Components
 import SteamLoginModal from './components/modals/SteamLoginModal.vue';
 import Steam2FAModal from './components/modals/Steam2FAModal.vue';
+import EpicLoginModal from './components/modals/EpicLoginModal.vue';
 import AddGameModal from './components/modals/AddGameModal.vue';
 import ConfirmDeleteModal from './components/modals/ConfirmDeleteModal.vue';
 
@@ -187,6 +197,18 @@ watch(showLoginModal, (isOpen) => {
 watch(show2FAModal, (isOpen) => {
   if (!isOpen) {
     verifying2FA.value = false;
+  }
+});
+
+// Epic Auth State
+const showEpicLoginModal = ref(false);
+const loggingInEpic = ref(false);
+const epicLoginError = ref('');
+
+watch(showEpicLoginModal, (isOpen) => {
+  if (!isOpen) {
+    loggingInEpic.value = false;
+    epicLoginError.value = '';
   }
 });
 
@@ -288,6 +310,23 @@ const { wsConnected } = useWebSocket({
     }
     const stm = servicesList.value.find(s => s.id === 'steam');
     if (stm) stm.status = 'awaiting_2fa';
+  },
+  'epic:status': (data) => {
+    const epc = servicesList.value.find(s => s.id === 'epic');
+    if (epc) {
+      epc.status = data.state;
+      epc.username = data.username;
+    }
+    if (data.state === 'connected') {
+      loggingInEpic.value = false;
+      showEpicLoginModal.value = false;
+      epicLoginError.value = '';
+      fetchLibrary();
+      fetchServices();
+    } else if (data.state === 'error') {
+      loggingInEpic.value = false;
+      epicLoginError.value = data.error_message || 'Epic Games authentication failed';
+    }
   },
   'prefill:progress': (data) => {
     activePrefillJob.value = data;
@@ -564,6 +603,48 @@ async function submit2FACode(code) {
 async function logoutSteam() {
   await api.steamLogout();
   fetchSteamStatus();
+}
+
+function openEpicLoginModal() {
+  epicLoginError.value = '';
+  showEpicLoginModal.value = true;
+}
+
+async function handleEpicLogin({ code }) {
+  loggingInEpic.value = true;
+  epicLoginError.value = '';
+  try {
+    const res = await api.login('epic', code, '');
+    const epc = servicesList.value.find(s => s.id === 'epic');
+    if (epc && res.status) {
+      epc.status = res.status.state;
+      epc.username = res.status.username;
+    }
+    if (res.status?.state === 'connected') {
+      showEpicLoginModal.value = false;
+      loggingInEpic.value = false;
+      await fetchServices();
+      await fetchLibrary();
+    } else if (res.status?.state === 'error') {
+      loggingInEpic.value = false;
+      epicLoginError.value = res.status.error_message || 'Failed to authenticate with Epic Games';
+    }
+  } catch (err) {
+    loggingInEpic.value = false;
+    epicLoginError.value = err.message || 'Failed to authenticate with Epic Games';
+  }
+}
+
+async function handleLogoutService(serviceId) {
+  try {
+    await api.logout(serviceId);
+    if (serviceId === 'steam') {
+      await fetchSteamStatus();
+    }
+    await fetchServices();
+  } catch (err) {
+    console.error(`Failed to logout from ${serviceId}:`, err);
+  }
 }
 
 async function triggerPrefill(game) {

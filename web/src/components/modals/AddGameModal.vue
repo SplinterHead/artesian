@@ -24,21 +24,21 @@
     <div v-else class="add-game-form">
       <!-- Store Selection Top Area -->
       <div class="store-selection-section mb-4">
-        <div class="single-store-header">
+        <div v-if="authenticatedServices.length === 1" class="single-store-header">
           <div class="store-badge-single selected">
-            <div class="store-logo-wrapper store-bg-steam">
+            <div class="store-logo-wrapper" :class="'store-bg-' + authenticatedServices[0].id">
               <svg 
-                v-if="platformLogos.steam" 
+                v-if="platformLogos[authenticatedServices[0].id]" 
                 class="store-svg" 
-                :viewBox="platformLogos.steam.viewBox" 
+                :viewBox="platformLogos[authenticatedServices[0].id].viewBox" 
                 fill="currentColor"
               >
-                <path :d="platformLogos.steam.path" />
+                <path :d="platformLogos[authenticatedServices[0].id].path" />
               </svg>
               <i v-else class="fa-solid fa-gamepad"></i>
             </div>
             <div class="store-info-single">
-              <span class="store-title">Steam</span>
+              <span class="store-title">{{ authenticatedServices[0].display_name }}</span>
               <span class="store-sub">
                 <i class="fa-solid fa-circle-check text-green mr-1"></i> Connected
                 <span v-if="authenticatedServices[0]?.username" class="store-user">({{ authenticatedServices[0].username }})</span>
@@ -46,6 +46,31 @@
             </div>
             <span class="badge badge-hit ml-auto">SELECTED</span>
           </div>
+        </div>
+
+        <div v-else class="store-tabs-grid">
+          <button 
+            v-for="svc in authenticatedServices" 
+            :key="svc.id"
+            type="button"
+            class="store-tab-btn"
+            :class="{ active: selectedServiceId === svc.id }"
+            @click="switchStore(svc.id)"
+          >
+            <div class="store-tab-icon" :class="'store-bg-' + svc.id">
+              <svg 
+                v-if="platformLogos[svc.id]" 
+                class="store-svg" 
+                :viewBox="platformLogos[svc.id].viewBox" 
+                fill="currentColor"
+              >
+                <path :d="platformLogos[svc.id].path" />
+              </svg>
+              <i v-else class="fa-solid fa-gamepad"></i>
+            </div>
+            <span class="store-tab-name">{{ svc.display_name }}</span>
+            <i v-if="selectedServiceId === svc.id" class="fa-solid fa-circle-check store-active-indicator"></i>
+          </button>
         </div>
       </div>
 
@@ -317,25 +342,6 @@ const canAdd = computed(() => {
   return false;
 });
 
-// Live game fetching
-async function loadGames() {
-  loadingGames.value = true;
-  fetchError.value = '';
-  privacyHint.value = '';
-  try {
-    const res = await api.getAvailableGames('steam');
-    availableGames.value = res.games || [];
-    privacyHint.value = res.hint || '';
-  } catch (err) {
-    console.error('Failed to load available Steam games', err);
-    fetchError.value = err.message || 'Failed to fetch games list';
-    availableGames.value = [];
-    privacyHint.value = '';
-  } finally {
-    loadingGames.value = false;
-  }
-}
-
 // Toggling platforms for multi-platform games
 function togglePlatform(platform) {
   const idx = selectedPlatforms.value.indexOf(platform);
@@ -343,6 +349,34 @@ function togglePlatform(platform) {
     selectedPlatforms.value.push(platform);
   } else {
     selectedPlatforms.value.splice(idx, 1);
+  }
+}
+
+// Switch between connected stores
+async function switchStore(svcId) {
+  if (selectedServiceId.value === svcId) return;
+  selectedServiceId.value = svcId;
+  selectedGameAppId.value = '';
+  selectedPlatforms.value = [];
+  await loadGames(svcId);
+}
+
+// Live game fetching
+async function loadGames(serviceId = selectedServiceId.value) {
+  loadingGames.value = true;
+  fetchError.value = '';
+  privacyHint.value = '';
+  try {
+    const res = await api.getAvailableGames(serviceId);
+    availableGames.value = res.games || [];
+    privacyHint.value = res.hint || '';
+  } catch (err) {
+    console.error(`Failed to load available ${serviceId} games`, err);
+    fetchError.value = err.message || 'Failed to fetch games list';
+    availableGames.value = [];
+    privacyHint.value = '';
+  } finally {
+    loadingGames.value = false;
   }
 }
 
@@ -371,8 +405,10 @@ watch(() => props.modelValue, async (isOpen) => {
     privacyHint.value = '';
 
     if (authenticatedServices.value.length > 0) {
-      selectedServiceId.value = 'steam';
-      await loadGames();
+      if (!authenticatedServices.value.some(s => s.id === selectedServiceId.value)) {
+        selectedServiceId.value = authenticatedServices.value[0].id;
+      }
+      await loadGames(selectedServiceId.value);
     } else {
       availableGames.value = [];
     }
@@ -601,6 +637,7 @@ function handleSubmit() {
 
 /* Service Colors */
 .store-bg-steam { color: #66c0f4; }
+.store-bg-epic { color: #f2f2f2; }
 
 /* Form Controls */
 .label-row {

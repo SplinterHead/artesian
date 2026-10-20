@@ -161,7 +161,37 @@ This file provides critical architectural context, developer guidelines, convent
 
 ---
 
-## 6. Build & Deployment Commands
+## 6. Epic Games Adapter & Pipeline (`internal/adapters/epic/`)
+
+### Authentication & OAuth2 Launcher Emulation (`auth.go`, `EpicLoginModal.vue`)
+- Emulates the official Windows Epic Games Launcher OAuth2 client credentials (`client_id = 34a02cf8f4414e29b15921876da36f9a`, `client_secret = daafbccc737745039dffe53d94fc76cf`).
+- User opens the official Epic authorization link in browser and pastes the resulting authorization code (or complete JSON payload) into Artesian.
+- Exchanged via `POST https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token` (`grant_type=authorization_code`).
+- Session is stored in SQLite `auth_sessions` (`service = 'epic'`). Long-lived `refresh_token` allows scheduled background update checks and prefill jobs without user re-authentication.
+
+### Owned Library & Catalog Resolution (`games.go`)
+- Fetches playable assets from `GET https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/public/assets/Windows?label=Live`.
+- Filters out Unreal Engine marketplace items (`namespace == "ue"`).
+- Resolves human-readable titles, box art, and platform support by querying `GET /catalog/api/shared/namespace/{namespace}/bulk/items` in batches of 50.
+- Caches catalog information in SQLite `game_meta_cache`.
+- Produces stable positive 63-bit `app_id` integers via `HashAppName` (`fnv64a(appName) & 0x7FFFFFFFFFFFFFFF`).
+
+### Binary Manifest Parsing & Chunk Resolution (`manifest.go`, `metadata.go`, `content.go`)
+- Queries asset manifests via `GET /launcher/api/public/assets/v2/platform/Windows/namespace/{namespace}/catalogItem/{catalogItemId}/app/{appName}/label/Live`.
+- Retrieves the manifest file with signed CDN tokens and parses modern Epic **zlib-compressed binary manifests** (`Magic == 0x44BEC00C`):
+  - Evaluates `FeatureLevel` (`<13`: `Chunks`, `13-14`: `ChunksV2`, `15-17`: `ChunksV3`, `>=18`: `ChunksV4`).
+  - Unpacks `ChunkDataList` Struct-of-Arrays (SoA): GUIDs (16 bytes, `%08X%08X%08X%08X`), Hashes (8 bytes, `%016X`), ShaHashes (20 bytes), GroupNumbers (`%02d`), WindowSizes, FileSizes.
+- Stores parsed chunks in SQLite `depot_manifest_chunks`.
+- Constructs chunk CDN URLs: `{BaseDir}/{ChunksV4}/{GroupNumber}/{Hash}_{GUID}.chunk`.
+
+### Host-Agnostic Chunk Caching (`cache.go`, `proxy.go`, `prefill.go`)
+- Epic dynamically routes downloads across `epicgames-download*.akamaized.net`, `download.epicgames.com`, and `fastly-download.epicgames.com`.
+- Proxy and prefill cache keys index strictly by URL path (`req.URL.Path`), stripping the `Host` header and temporary query-string auth tokens.
+- Chunks are stored in `/data/cache/epic/{prefix1}/{prefix2}/{Hash}_{GUID}.chunk`, guaranteeing a 100% cache hit regardless of CDN domain.
+
+---
+
+## 7. Build & Deployment Commands
 
 ```bash
 # 1. Build frontend assets
@@ -182,7 +212,7 @@ docker compose ps
 
 ---
 
-## 7. Key File Map
+## 8. Key File Map
 
 | Path | Purpose |
 |---|---|
@@ -196,14 +226,23 @@ docker compose ps
 | `internal/adapters/steam/games.go` | Dynamic owned game fetching via Steam Web API & XML community profile |
 | `internal/adapters/steam/metadata.go` | SteamCMD PICS & Store API info, depot metadata caching, base App ID resolution |
 | `internal/adapters/steam/network.go` | Steam CDN wildcard domains, host matching, cacheability inspection |
+| `internal/adapters/epic/adapter.go` | Hexagonal Epic Adapter constructor, state struct, `HashAppName` mapper |
+| `internal/adapters/epic/auth.go` | Epic OAuth2 Launcher emulation, auth code parser, token exchange & refresh |
+| `internal/adapters/epic/content.go` | Epic CDN hosts, `BuildChunkURL`, `ParseChunkKey`, chunk resolver |
+| `internal/adapters/epic/games.go` | Epic live owned assets fetch, catalog bulk resolution, platform detector |
+| `internal/adapters/epic/manifest.go` | Binary zlib manifest parser (`0x44BEC00C`), `FeatureLevel` router, SoA unpacker |
+| `internal/adapters/epic/metadata.go` | Epic V2 assets API manifest retriever, manifest download & chunk recorder |
+| `internal/adapters/epic/network.go` | Epic CDN domains (`akamaized.net`, `epicgames.com`), cacheability matcher |
 | `internal/api/api.go` | HTTP endpoints, library routes, generic auth routes, WebSocket hub handler |
-| `internal/proxy/proxy.go` | HTTP caching proxy, multi-platform host identification, active download sessions |
+| `internal/proxy/proxy.go` | HTTP caching proxy, host-agnostic path caching, active download sessions |
 | `internal/manifest/manifest.go` | Protobuf & ZIP manifest parser, candidate search, raw manifest persistence |
 | `internal/prefill/prefill.go` | Prefill engine, multi-platform chunk downloader via adapter registry |
 | `internal/scheduler/scheduler.go` | robfig/cron background update check scheduler across all registered platform adapters |
 | `internal/db/db.go` | SQLite schema, watched apps, depot meta, chunk records, manifest chunks, auth sessions |
 | `internal/ws/hub.go` | Real-time WebSocket event broadcaster |
-| `web/src/components/modals/AddGameModal.vue` | Game Add modal with interactive text filter input |
+| `web/src/components/modals/EpicLoginModal.vue` | Epic Games OAuth2 code login modal with direct authorization link |
+| `web/src/components/modals/AddGameModal.vue` | Multi-store Game Add modal with interactive text filter input |
+| `web/src/views/AccountsView.vue` | Accounts hub with multi-store connect/disconnect and monitoring toggles |
 | `web/src/views/StatsView.vue` | Dashboard with Active Downloads table, Artesian badge, progress bar |
 | `web/src/composables/useDownloads.js` | Active downloads state, real-time chunk bundling, auto-pruner |
 | `docker-compose.yml` | Appliance deployment definition with persistent host volume mounts |

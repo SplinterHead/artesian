@@ -393,7 +393,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 	service := s.registry.Identify(req.Host)
-	cacheKey := req.URL.RequestURI()
+	cacheKey := req.URL.Path
 	serviceName := "generic"
 	if service != nil {
 		serviceName = service.Name()

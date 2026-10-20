@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"artesian/internal/adapters/epic"
 	"artesian/internal/adapters/steam"
 	"artesian/internal/api"
 	"artesian/internal/cache"
@@ -66,11 +67,16 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 		log.Fatalf("[Artesian] Cache storage error: %v", err)
 	}
 
-	// 5. Initialize Steam Adapter & Register with Service Registry
-	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
+	// 5. Initialize Platform Adapters & Register with Service Registry
 	registry := services.NewRegistry()
+
+	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
 	registry.Register(steamAdapter)
 	log.Println("[Artesian] Service registered: Steam")
+
+	epicAdapter := epic.NewAdapter(database, storage, &cfg.DNS)
+	registry.Register(epicAdapter)
+	log.Println("[Artesian] Service registered: Epic Games")
 
 	// 6. Initialize Prefill & Scheduler Subsystems
 	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)

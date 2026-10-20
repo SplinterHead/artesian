@@ -478,7 +478,7 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 
 		resp, err := m.httpClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			destPath, written, storeErr := m.cache.Store(service, chunkURL, resp.Body)
+			destPath, written, storeErr := m.cache.Store(service, req.URL.Path, resp.Body)
 			_ = resp.Body.Close()
 			if storeErr == nil && m.db != nil {
 				_ = m.db.RecordChunk(chunk.ChunkID, service, depotID, appID, written, destPath)
