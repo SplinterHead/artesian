@@ -545,12 +545,9 @@ type ServiceItem struct {
 	ID               string   `json:"id"`
 	DisplayName      string   `json:"display_name"`
 	Company          string   `json:"company"`
-	Icon             string   `json:"icon"`
 	Status           string   `json:"status"` // "connected", "ready", "disabled", "planned"
 	InterceptEnabled bool     `json:"intercept_enabled"`
 	AutoUpdate       bool     `json:"auto_update"`
-	AuthSupported    bool     `json:"auth_supported"`
-	PrefillSupported bool     `json:"prefill_supported"`
 	Username         string   `json:"username,omitempty"`
 	Domains          []string `json:"domains"`
 	Description      string   `json:"description"`
@@ -570,30 +567,14 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			if s.db != nil {
 				autoUpdate = s.db.GetServiceAutoUpdate(adapter.ID())
 			}
-			icon := "🎮"
-			switch adapter.ID() {
-			case "steam":
-				icon = "🎮"
-			case "epic":
-				icon = "⚡"
-			case "battlenet":
-				icon = "⚔️"
-			case "riot":
-				icon = "💥"
-			case "xbox":
-				icon = "🟩"
-			}
 
 			servicesList = append(servicesList, ServiceItem{
 				ID:               adapter.ID(),
 				DisplayName:      adapter.DisplayName(),
 				Company:          adapter.Company(),
-				Icon:             icon,
 				Status:           string(status.State),
 				InterceptEnabled: s.registry.IsEnabled(adapter.ID()),
 				AutoUpdate:       autoUpdate,
-				AuthSupported:    true,
-				PrefillSupported: true,
 				Username:         status.Username,
 				Domains:          adapter.Domains(),
 				Description:      adapter.Description(),

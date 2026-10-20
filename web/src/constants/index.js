@@ -15,8 +15,6 @@ export const DEFAULT_SERVICES = [
     company: 'Valve',
     status: 'disconnected',
     intercept_enabled: true,
-    auth_supported: true,
-    prefill_supported: true,
     username: '',
     domains: [
       '*.cs.steampowered.com',
