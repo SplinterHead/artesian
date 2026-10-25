@@ -68,7 +68,15 @@
                       class="platform-tag"
                       :title="p"
                     >
-                      <i :class="getPlatformIcon(p)"></i>
+                      <svg
+                        v-if="isXboxPlatform(p)"
+                        class="platform-tag-svg"
+                        :viewBox="platformLogos.xbox.viewBox"
+                        aria-hidden="true"
+                      >
+                        <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                      </svg>
+                      <i v-else :class="getPlatformIcon(p)"></i>
                     </span>
                   </span>
                 </div>
@@ -206,7 +214,15 @@
                       class="platform-tag"
                       :title="p"
                     >
-                      <i :class="getPlatformIcon(p)"></i>
+                      <svg
+                        v-if="isXboxPlatform(p)"
+                        class="platform-tag-svg"
+                        :viewBox="platformLogos.xbox.viewBox"
+                        aria-hidden="true"
+                      >
+                        <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                      </svg>
+                      <i v-else :class="getPlatformIcon(p)"></i>
                     </span>
                   </span>
                 </div>
@@ -255,6 +271,7 @@ import {
   getLogoKey,
   getPlatformIcon,
   getPlatformList,
+  isXboxPlatform,
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -453,6 +470,12 @@ function getGameKey(game) {
   border: 1px solid rgba(102, 192, 244, 0.35);
 }
 
+.store-logo-xbox {
+  background: radial-gradient(circle at top left, rgba(16, 124, 16, 0.35), rgba(15, 23, 42, 0.8));
+  color: #107c10;
+  border: 1px solid rgba(16, 124, 16, 0.45);
+}
+
 .store-logo-generic {
   background: rgba(148, 163, 184, 0.15);
   color: #94a3b8;
@@ -461,5 +484,11 @@ function getGameKey(game) {
 
 .fallback-logo-icon {
   font-size: 0.9rem;
+}
+
+.platform-tag-svg {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 </style>

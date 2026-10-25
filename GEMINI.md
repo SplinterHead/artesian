@@ -161,7 +161,37 @@ This file provides critical architectural context, developer guidelines, convent
 
 ---
 
-## 6. Build & Deployment Commands
+## 6. Xbox & Microsoft Store Architecture
+
+Artesian includes a high-performance content cache and active pre-fetcher for Xbox and Microsoft Store titles distributed as monolithic archives (`.msixvc` or `.xvc`) alongside piece hash (`.phf`) and descriptor (`.ecd`) files.
+
+### 1. The Auth Chain (OAuth2 → XAU → XSTS)
+- **MSA OAuth2 Device Code Flow**: Authenticates using the official public Xbox App client ID (`00000000402b5328`) with scope `service::user.auth.xboxlive.com::MBI_SSL offline_access`. Provides a frictionless login modal with copyable user code and direct link to `https://microsoft.com/devicelogin`. Automatically polls until approved.
+- **Xbox Live User Token (XAU)**: Exchanges the MSA access token via `https://user.auth.xboxlive.com/user/authenticate` with RPS ticket `d={access_token}` to obtain the user token and user hash (`uhs`).
+- **Target-Scoped XSTS Tokens**:
+  - `http://mp.microsoft.com/`: Authorizes Store catalog queries and owned product collections.
+  - `http://xboxlive.com`: Authorizes TitleHub user game library and profile history queries.
+  - `http://update.xboxlive.com`: Authorizes CDN package resolution from `packagespc.xboxlive.com`.
+- **Session Persistence**: Sessions are saved to SQLite `auth_sessions` (`service = 'xbox'`) and refreshed automatically before expiration.
+
+### 2. Game Library & Catalog Enumeration
+- **User Title History (TitleHub)**: Queries `https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titlehistory/decoration/scid,image,detail` with `xbl_xsts_token` to discover all games played and owned by the user on Xbox. Extracts genuine 12-character Microsoft Store `ProductId` from `detail.availabilities`.
+- **Owned Digital Store Entitlements**: Queries `https://collections.mp.microsoft.com/v8.0/collections/b2bLicensePreview` with `mp_xsts_token` and `entitlementFilters: ["*:Game"]` supporting pagination.
+- **Game Pass Catalog**: Dynamically fetches active PC (`fdd9e2a7-0fee-49f6-ad69-4354098401ff`) and Console (`f6f1f99f-9b49-4ccd-b3bf-4d9767a77f5e`) catalog signatures from `https://catalog.gamepass.com/sigls/v2`.
+- **Display Catalog Hydration**: Batch queries `https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds={ids}` (in concurrent chunks of up to 100 IDs) to extract titles, `ContentId` GUIDs, `WuCategoryId`, and supported platforms (`Windows`, `Xbox Series X|S`, `Xbox One`). Product IDs map stably to positive `int64` app IDs. Results are sorted alphabetically and support an instant text filter in the Add Game modal.
+
+### 3. Package Resolution & Monolithic Slicing
+- **Xbox Package Service**: Queries `https://packagespc.xboxlive.com/GetBasePackage/{contentId}` using header `Authorization: XBL3.0 x={uhs};{update_xsts_token}` (relying party `http://update.xboxlive.com`). Extracts `.xvc` / `.msixvc` main package archive relative URLs, true file sizes, and CDN roots from `PackageFiles`.
+- **Delivery Optimization & FE3 Fallback**: Supports Delivery Optimization (`dl.delivery.mp.microsoft.com`).
+- **Byte-Range Alignment & Slicing**:
+  - Monolithic game archives are sliced into standard 1MB (`1048576` bytes) blocks: `{path}@range={start}-{end}`.
+  - Small descriptor files (`.ecd`) and piece hash files (`.phf`) are pre-cached in full alongside the main archive.
+  - Query signatures (`?P1=...&P2=...`) are stripped from cache keys to ensure permanent hits across SAS token rotations.
+  - Proxy intercepts incoming HTTP `Range` requests and serves `206 Partial Content` directly from local disk at maximum LAN throughput.
+
+---
+
+## 7. Build & Deployment Commands
 
 ```bash
 # 1. Build frontend assets
@@ -182,7 +212,7 @@ docker compose ps
 
 ---
 
-## 7. Key File Map
+## 8. Key File Map
 
 | Path | Purpose |
 |---|---|
@@ -196,6 +226,13 @@ docker compose ps
 | `internal/adapters/steam/games.go` | Dynamic owned game fetching via Steam Web API & XML community profile |
 | `internal/adapters/steam/metadata.go` | SteamCMD PICS & Store API info, depot metadata caching, base App ID resolution |
 | `internal/adapters/steam/network.go` | Steam CDN wildcard domains, host matching, cacheability inspection |
+| `internal/adapters/xbox/adapter.go` | Hexagonal Xbox / Microsoft Store Adapter constructor, state struct, dependency holder |
+| `internal/adapters/xbox/auth.go` | OAuth2 Device Code flow, XAU & XSTS dual-token exchange, auto-refresh |
+| `internal/adapters/xbox/content.go` | CDN hosts, chunk URL builder, 1MB byte-range chunk slicing, manifest resolution |
+| `internal/adapters/xbox/games.go` | Collections API owned library query, Game Pass discovery, Display Catalog hydration |
+| `internal/adapters/xbox/metadata.go` | Package depot metadata resolution, base App ID resolution, update checks |
+| `internal/adapters/xbox/network.go` | Xbox Live & Delivery Optimization wildcard domains, host matching, cacheability |
+| `internal/adapters/xbox/packages.go` | Package Service (`packagespc.xboxlive.com`) resolver for `.msixvc`, `.phf`, `.ecd` |
 | `internal/api/api.go` | HTTP endpoints, library routes, generic auth routes, WebSocket hub handler |
 | `internal/proxy/proxy.go` | HTTP caching proxy, host-agnostic path caching, active download sessions |
 | `internal/manifest/manifest.go` | Protobuf & ZIP manifest parser, candidate search, raw manifest persistence |
@@ -203,9 +240,10 @@ docker compose ps
 | `internal/scheduler/scheduler.go` | robfig/cron background update check scheduler across all registered platform adapters |
 | `internal/db/db.go` | SQLite schema, watched apps, depot meta, chunk records, manifest chunks, auth sessions |
 | `internal/ws/hub.go` | Real-time WebSocket event broadcaster |
-| `web/src/components/modals/PlatformLoginModal.vue` | Generic multi-store login modal supporting credentials & OAuth2 code flows |
+| `web/src/components/modals/PlatformLoginModal.vue` | Generic multi-store login modal supporting credentials & OAuth2 Device Code flow |
 | `web/src/components/modals/AddGameModal.vue` | Multi-store Game Add modal with interactive text filter input |
 | `web/src/views/AccountsView.vue` | Accounts hub with multi-store connect/disconnect and monitoring toggles |
 | `web/src/views/StatsView.vue` | Dashboard with Active Downloads table, Artesian badge, progress bar |
 | `web/src/composables/useDownloads.js` | Active downloads state, real-time chunk bundling, auto-pruner |
 | `docker-compose.yml` | Appliance deployment definition with persistent host volume mounts |
+

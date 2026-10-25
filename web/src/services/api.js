@@ -39,8 +39,12 @@ export const api = {
       body: JSON.stringify({ id, auto_update: autoUpdate }),
     });
   },
-  async getAvailableGames(service = 'steam') {
-    return request(`/api/v1/services/available-games?service=${encodeURIComponent(service)}`);
+  async getAvailableGames(service = 'steam', includeGamePass = false) {
+    let url = `/api/v1/services/available-games?service=${encodeURIComponent(service)}`;
+    if (includeGamePass) {
+      url += '&include_game_pass=true';
+    }
+    return request(url);
   },
   async getGamePlatforms(service, appId) {
     return request(
@@ -82,6 +86,17 @@ export const api = {
   },
   async steamLogout() {
     return this.logout('steam');
+  },
+
+  // Convenience methods for Xbox
+  async getXboxStatus() {
+    return this.getAuthStatus('xbox');
+  },
+  async xboxLogin(token = '') {
+    return this.login('xbox', '', token);
+  },
+  async xboxLogout() {
+    return this.logout('xbox');
   },
 
   // Library & Prefill

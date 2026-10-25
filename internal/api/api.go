@@ -482,8 +482,19 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 	var games []AvailableGame
 	var privacyRestricted bool
 	var privacyHint string
+	var hasGamePass bool
 
-	res, err := adapter.GetOwnedGames()
+	includeGamePass := r.URL.Query().Get("include_game_pass") == "true"
+
+	var res *ports.AccountGamesResult
+	var err error
+
+	if filterPort, ok := adapter.(ports.CatalogFilterPort); ok {
+		res, err = filterPort.GetOwnedGamesFiltered(includeGamePass)
+	} else {
+		res, err = adapter.GetOwnedGames()
+	}
+
 	if err != nil {
 		log.Printf("[API] Failed to fetch %s account games: %v", adapter.DisplayName(), err)
 	} else if res != nil {
@@ -497,6 +508,7 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 		}
 		privacyRestricted = res.PrivacyRestricted
 		privacyHint = res.Hint
+		hasGamePass = res.HasGamePass
 	}
 
 	if games == nil {
@@ -508,6 +520,7 @@ func (s *Server) handleAvailableGames(w http.ResponseWriter, r *http.Request) {
 		"games":              games,
 		"privacy_restricted": privacyRestricted,
 		"hint":               privacyHint,
+		"has_game_pass":      hasGamePass,
 	})
 }
 

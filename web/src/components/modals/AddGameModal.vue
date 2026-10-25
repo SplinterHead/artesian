@@ -130,6 +130,21 @@
           </select>
         </div>
 
+        <!-- Game Pass Inclusion Checkbox (only appears if account has active Game Pass) -->
+        <div v-if="selectedServiceId === 'xbox' && hasGamePass" class="game-pass-toggle-wrapper mt-2">
+          <label class="game-pass-checkbox-label">
+            <input
+              type="checkbox"
+              v-model="includeGamePass"
+              :disabled="loadingGames"
+              @change="handleGamePassToggle"
+            />
+            <span class="checkbox-text">
+              <i class="fa-solid fa-gamepad mr-1 text-accent"></i> Include Game Pass
+            </span>
+          </label>
+        </div>
+
         <p v-if="fetchError" class="field-error-text mt-1 text-xs text-danger">
           {{ fetchError }}
         </p>
@@ -172,7 +187,15 @@
             <option selected>{{ availablePlatforms[0] }}</option>
           </select>
           <span class="platform-lock-tag" :title="availablePlatforms[0]">
-            <i :class="getPlatformIcon(availablePlatforms[0])" class="mr-1"></i>
+            <svg
+              v-if="isXboxPlatform(availablePlatforms[0])"
+              class="platform-svg-inline mr-1"
+              :viewBox="platformLogos.xbox.viewBox"
+              aria-hidden="true"
+            >
+              <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+            </svg>
+            <i v-else :class="getPlatformIcon(availablePlatforms[0])" class="mr-1"></i>
             <i class="fa-solid fa-lock text-xs ml-1 text-muted"></i>
           </span>
         </div>
@@ -194,7 +217,15 @@
               </span>
               <div v-else class="selected-pills-row">
                 <span v-for="p in selectedPlatforms" :key="p" class="platform-pill">
-                  <i :class="getPlatformIcon(p)" class="mr-1"></i>
+                  <svg
+                    v-if="isXboxPlatform(p)"
+                    class="platform-svg-inline mr-1"
+                    :viewBox="platformLogos.xbox.viewBox"
+                    aria-hidden="true"
+                  >
+                    <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                  </svg>
+                  <i v-else :class="getPlatformIcon(p)" class="mr-1"></i>
                   {{ p }}
                 </span>
               </div>
@@ -227,7 +258,15 @@
                   @change="togglePlatform(p)"
                 />
                 <div class="option-icon-box">
-                  <i :class="getPlatformIcon(p)"></i>
+                  <svg
+                    v-if="isXboxPlatform(p)"
+                    class="platform-svg-inline"
+                    :viewBox="platformLogos.xbox.viewBox"
+                    aria-hidden="true"
+                  >
+                    <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                  </svg>
+                  <i v-else :class="getPlatformIcon(p)"></i>
                 </div>
                 <span class="option-label">{{ p }}</span>
                 <span v-if="selectedPlatforms.includes(p)" class="check-indicator">
@@ -261,7 +300,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import BaseModal from '../common/BaseModal.vue';
 import { api } from '../../services/api';
 import { platformLogos } from '../../utils/logos';
-import { getPlatformIcon, getPlatformList } from '../../utils/formatters';
+import { getPlatformIcon, getPlatformList, isXboxPlatform } from '../../utils/formatters';
 
 const props = defineProps({
   modelValue: {
@@ -294,6 +333,8 @@ const selectedGameAppId = ref('');
 const selectedPlatforms = ref([]);
 const isPlatformDropdownOpen = ref(false);
 const dropdownRef = ref(null);
+const hasGamePass = ref(false);
+const includeGamePass = ref(false);
 
 // Authenticated Services
 const authenticatedServices = computed(() => {
@@ -369,12 +410,21 @@ function togglePlatform(platform) {
   }
 }
 
+// Toggle Game Pass inclusion
+async function handleGamePassToggle() {
+  selectedGameAppId.value = '';
+  selectedPlatforms.value = [];
+  await loadGames(selectedServiceId.value);
+}
+
 // Switch between connected stores
 async function switchStore(svcId) {
   if (selectedServiceId.value === svcId) return;
   selectedServiceId.value = svcId;
   selectedGameAppId.value = '';
   selectedPlatforms.value = [];
+  includeGamePass.value = false;
+  hasGamePass.value = false;
   await loadGames(svcId);
 }
 
@@ -384,9 +434,12 @@ async function loadGames(serviceId = selectedServiceId.value) {
   fetchError.value = '';
   privacyHint.value = '';
   try {
-    const res = await api.getAvailableGames(serviceId);
+    const res = await api.getAvailableGames(serviceId, includeGamePass.value);
     availableGames.value = res.games || [];
     privacyHint.value = res.hint || '';
+    if (res.has_game_pass !== undefined) {
+      hasGamePass.value = Boolean(res.has_game_pass);
+    }
   } catch (err) {
     console.error(`Failed to load available ${serviceId} games`, err);
     fetchError.value = err.message || 'Failed to fetch games list';
@@ -422,6 +475,8 @@ watch(
       isPlatformDropdownOpen.value = false;
       fetchError.value = '';
       privacyHint.value = '';
+      includeGamePass.value = false;
+      hasGamePass.value = false;
 
       if (authenticatedServices.value.length > 0) {
         if (!authenticatedServices.value.some((s) => s.id === selectedServiceId.value)) {
@@ -655,6 +710,10 @@ function handleSubmit() {
 /* Service Colors */
 .store-bg-steam {
   color: #66c0f4;
+}
+
+.store-bg-xbox {
+  color: #107c10;
 }
 
 /* Form Controls */
@@ -904,5 +963,53 @@ function handleSubmit() {
   border-radius: 6px;
   padding: 0.45rem 0.75rem;
   gap: 0.4rem;
+}
+
+/* Game Pass Toggle Checkbox */
+.game-pass-toggle-wrapper {
+  display: flex;
+  align-items: center;
+  padding: 0.25rem 0.15rem;
+}
+
+.game-pass-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.game-pass-checkbox-label input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.game-pass-checkbox-label:hover .checkbox-text {
+  color: #fff;
+}
+
+.platform-svg-inline {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  vertical-align: -2px;
+  flex-shrink: 0;
+}
+
+.option-icon-box .platform-svg-inline {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+
+.platform-pill .platform-svg-inline {
+  width: 13px;
+  height: 13px;
+  vertical-align: -1px;
 }
 </style>

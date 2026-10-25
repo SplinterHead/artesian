@@ -76,7 +76,9 @@
       :service-name="activeLoginService.display_name"
       :loading="loggingIn"
       :error-msg="loginError"
+      :auth-status="activeAuthStatus"
       @submit="handlePlatformLogin"
+      @cancel="handleCancelLogin"
     />
 
     <Steam2FAModal
@@ -176,6 +178,17 @@ const steamStatus = ref({
   state: 'disconnected',
   username: '',
   has_valid_auth: false,
+});
+const xboxStatus = ref({
+  state: 'disconnected',
+  username: '',
+  has_valid_auth: false,
+});
+const activeAuthStatus = computed(() => {
+  if (activeLoginService.value?.id === 'xbox') {
+    return xboxStatus.value;
+  }
+  return steamStatus.value;
 });
 const showLoginModal = ref(false);
 const show2FAModal = ref(false);
@@ -287,6 +300,27 @@ const { wsConnected } = useWebSocket({
       loggingIn.value = false;
     }
   },
+  'xbox:status': (data) => {
+    xboxStatus.value = data;
+    const xb = servicesList.value.find((s) => s.id === 'xbox');
+    if (xb) {
+      xb.status = data.state;
+      xb.username = data.username;
+    }
+    if (data.state === 'connected') {
+      if (xb) xb.auto_update = true;
+      loggingIn.value = false;
+      loginError.value = '';
+      showLoginModal.value = false;
+      fetchLibrary();
+      fetchServices();
+    } else if (data.state === 'error') {
+      loggingIn.value = false;
+      loginError.value = data.error_message || 'Xbox authentication failed';
+    } else if (data.state === 'connecting') {
+      loggingIn.value = false;
+    }
+  },
   'steam:2fa_required': (data) => {
     loggingIn.value = false;
     showLoginModal.value = false;
@@ -359,6 +393,17 @@ async function fetchSteamStatus() {
     if (stm) {
       stm.status = steamStatus.value.state;
       stm.username = steamStatus.value.username;
+    }
+  } catch {}
+}
+
+async function fetchXboxStatus() {
+  try {
+    xboxStatus.value = await api.getXboxStatus();
+    const xb = servicesList.value.find((s) => s.id === 'xbox');
+    if (xb) {
+      xb.status = xboxStatus.value.state;
+      xb.username = xboxStatus.value.username;
     }
   } catch {}
 }
@@ -506,6 +551,33 @@ async function handlePlatformLogin(payload) {
   loginError.value = '';
   loggingIn.value = true;
 
+  if (service === 'xbox') {
+    try {
+      const data = await api.xboxLogin(payload.password);
+      if (data?.status) {
+        xboxStatus.value = data.status;
+        const xb = servicesList.value.find((s) => s.id === 'xbox');
+        if (xb) {
+          xb.status = data.status.state;
+          xb.username = data.status.username;
+        }
+        if (data.status.state === 'connected') {
+          if (xb) xb.auto_update = true;
+          loggingIn.value = false;
+          showLoginModal.value = false;
+          fetchLibrary();
+          fetchServices();
+          return;
+        }
+      }
+      loggingIn.value = false;
+    } catch (err) {
+      loggingIn.value = false;
+      loginError.value = err.message || 'Failed to authenticate with Xbox';
+    }
+    return;
+  }
+
   if (service === 'steam') {
     loginUsername.value = payload.username;
     loginPassword.value = payload.password;
@@ -596,11 +668,22 @@ async function submit2FACode(code) {
   }
 }
 
+async function handleCancelLogin() {
+  if (activeLoginService.value?.id === 'xbox') {
+    try {
+      await api.submit2FA('xbox', 'cancel');
+      await fetchXboxStatus();
+    } catch {}
+  }
+}
+
 async function handleLogoutService(serviceId) {
   try {
     await api.logout(serviceId);
     if (serviceId === 'steam') {
       await fetchSteamStatus();
+    } else if (serviceId === 'xbox') {
+      await fetchXboxStatus();
     }
     await fetchServices();
   } catch (err) {
@@ -738,6 +821,7 @@ onMounted(() => {
   fetchServices();
   fetchStats();
   fetchSteamStatus();
+  fetchXboxStatus();
   fetchLibrary();
   fetchCachedGames();
   fetchScheduler();

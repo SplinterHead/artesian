@@ -105,6 +105,9 @@ func FormatStoreName(service string) string {
 	if strings.EqualFold(service, "steam") {
 		return "Steam"
 	}
+	if strings.EqualFold(service, "xbox") {
+		return "Xbox"
+	}
 	if len(service) == 0 {
 		return service
 	}
@@ -282,7 +285,7 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 				res.Header.Set("X-Artesian-Service", ctxData.serviceName)
 			}
 
-			if ctxData.canCache && res.StatusCode == http.StatusOK {
+			if ctxData.canCache && (res.StatusCode == http.StatusOK || res.StatusCode == http.StatusPartialContent) {
 				bodyBytes, err := io.ReadAll(res.Body)
 				_ = res.Body.Close()
 				if err == nil {
@@ -390,16 +393,32 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 	service := s.registry.Identify(req.Host)
-	cacheKey := req.URL.Path
 	serviceName := "generic"
 	if service != nil {
 		serviceName = service.Name()
+	}
+
+	// Normalized base cache key (stripping query string SAS tokens)
+	rawPath := req.URL.Path
+	cacheKey := rawPath
+	rangeHeader := req.Header.Get("Range")
+	var isRangeRequest bool
+	var rangeStart, rangeEnd int64
+
+	if rangeHeader != "" {
+		if rStart, rEnd, ok := parseByteRange(rangeHeader); ok {
+			isRangeRequest = true
+			rangeStart = rStart
+			rangeEnd = rEnd
+			cacheKey = fmt.Sprintf("%s@range=%d-%d", rawPath, rStart, rEnd)
+		}
 	}
 
 	// Cache GET and HEAD requests for identified services only according to platform rules
 	canCache := service != nil && service.IsCacheable(req)
 
 	// Phase 2: Check SQLite and disk storage
+	// 2a. Direct hit on exact range chunk or whole file
 	if canCache && s.cache.Has(serviceName, cacheKey) {
 		file, size, err := s.cache.Open(serviceName, cacheKey)
 		if err == nil {
@@ -408,8 +427,15 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("X-LanCache-Processed-By", "artesian")
 			w.Header().Set("X-Artesian-Cache", "HIT")
 			w.Header().Set("X-Artesian-Service", serviceName)
+			w.Header().Set("Accept-Ranges", "bytes")
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-			w.WriteHeader(http.StatusOK)
+
+			statusCode := http.StatusOK
+			if isRangeRequest {
+				statusCode = http.StatusPartialContent
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", rangeStart, rangeEnd))
+			}
+			w.WriteHeader(statusCode)
 
 			if req.Method == http.MethodGet {
 				_, _ = io.Copy(w, file)
@@ -426,14 +452,76 @@ func (s *Server) handleProxy(w http.ResponseWriter, req *http.Request) {
 
 			// ONLY log & broadcast if service is one of our tracked CDNs
 			if service != nil {
-				s.publishTraffic(req.RemoteAddr, req.Host, req.Method, req.URL.RequestURI(), req.Header.Get("User-Agent"), http.StatusOK, true, size, duration, serviceName)
+				s.publishTraffic(req.RemoteAddr, req.Host, req.Method, req.URL.RequestURI(), req.Header.Get("User-Agent"), statusCode, true, size, duration, serviceName)
 			}
 			return
 		}
 	}
 
+	// 2b. Fallback: Range slice extracted from full cached file
+	if canCache && isRangeRequest && s.cache.Has(serviceName, rawPath) {
+		file, fullSize, err := s.cache.Open(serviceName, rawPath)
+		if err == nil {
+			defer file.Close()
+
+			if rangeStart < fullSize {
+				actualEnd := rangeEnd
+				if actualEnd >= fullSize {
+					actualEnd = fullSize - 1
+				}
+				sliceLen := actualEnd - rangeStart + 1
+				_, _ = file.Seek(rangeStart, io.SeekStart)
+
+				w.Header().Set("X-LanCache-Processed-By", "artesian")
+				w.Header().Set("X-Artesian-Cache", "HIT")
+				w.Header().Set("X-Artesian-Service", serviceName)
+				w.Header().Set("Accept-Ranges", "bytes")
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", sliceLen))
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rangeStart, actualEnd, fullSize))
+				w.WriteHeader(http.StatusPartialContent)
+
+				if req.Method == http.MethodGet {
+					_, _ = io.CopyN(w, file, sliceLen)
+				}
+
+				duration := time.Since(start).Milliseconds()
+				if service != nil && s.db != nil {
+					if _, chunkHash, ok := service.ParseChunkKey(cacheKey); ok {
+						s.db.IncrementChunkHit(chunkHash)
+					}
+				}
+				if service != nil {
+					s.publishTraffic(req.RemoteAddr, req.Host, req.Method, req.URL.RequestURI(), req.Header.Get("User-Agent"), http.StatusPartialContent, true, sliceLen, duration, serviceName)
+				}
+				return
+			}
+		}
+	}
+
 	// Pass-Through via reusable reverse proxy
 	s.passThrough(w, req, service, serviceName, cacheKey, start, canCache)
+}
+
+// parseByteRange parses HTTP Range: bytes=start-end header
+func parseByteRange(rangeHeader string) (int64, int64, bool) {
+	rangeHeader = strings.TrimSpace(rangeHeader)
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(rangeHeader, "bytes=")
+	if strings.Contains(spec, ",") {
+		spec = strings.Split(spec, ",")[0]
+	}
+	parts := strings.Split(strings.TrimSpace(spec), "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	start, err1 := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	end, err2 := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if err1 != nil || err2 != nil || start < 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 func (s *Server) passThrough(w http.ResponseWriter, req *http.Request, svc ports.PlatformAdapter, serviceName, cacheKey string, start time.Time, canCache bool) {

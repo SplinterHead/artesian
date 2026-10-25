@@ -30,6 +30,9 @@ type AuthStatus struct {
 	HasDeviceCode         bool      `json:"has_device_code"`
 	HasEmailCode          bool      `json:"has_email_code"`
 	AssociatedMessage     string    `json:"associated_message,omitempty"`
+	UserCode              string    `json:"user_code,omitempty"`
+	VerificationURL       string    `json:"verification_url,omitempty"`
+	ExpiresIn             int       `json:"expires_in,omitempty"`
 }
 
 // AccountGame represents an owned game resolved for an account
@@ -46,6 +49,12 @@ type AccountGamesResult struct {
 	TotalFound        int           `json:"total_found"`
 	PrivacyRestricted bool          `json:"privacy_restricted"`
 	Hint              string        `json:"hint,omitempty"`
+	HasGamePass       bool          `json:"has_game_pass"`
+}
+
+// CatalogFilterPort is an optional interface for adapters supporting catalog toggles
+type CatalogFilterPort interface {
+	GetOwnedGamesFiltered(includeGamePass bool) (*AccountGamesResult, error)
 }
 
 // DepotInfo represents resolved metadata for a depot or game asset

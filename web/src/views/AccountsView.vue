@@ -280,6 +280,13 @@ function getServiceStatusText(svc) {
   border-color: rgba(102, 192, 244, 0.25);
 }
 
+.service-icon-box.icon-xbox {
+  color: #107c10;
+  background: rgba(16, 124, 16, 0.12);
+  border-color: rgba(16, 124, 16, 0.35);
+  box-shadow: 0 0 12px rgba(16, 124, 16, 0.15);
+}
+
 .service-title-area {
   flex: 1;
   min-width: 0;

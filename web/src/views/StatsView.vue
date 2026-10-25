@@ -109,7 +109,15 @@
                       class="platform-tag"
                       :title="p"
                     >
-                      <i :class="getPlatformIcon(p)"></i>
+                      <svg
+                        v-if="isXboxPlatform(p)"
+                        class="platform-tag-svg"
+                        :viewBox="platformLogos.xbox.viewBox"
+                        aria-hidden="true"
+                      >
+                        <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                      </svg>
+                      <i v-else :class="getPlatformIcon(p)"></i>
                     </span>
                   </span>
                 </div>
@@ -208,6 +216,7 @@ import {
   getLogoKey,
   getPlatformIcon,
   getPlatformList,
+  isXboxPlatform,
 } from '../utils/formatters';
 import { platformLogos } from '../utils/logos';
 
@@ -305,6 +314,19 @@ defineEmits(['clear-traffic']);
   border-color: rgba(102, 192, 244, 0.7);
   box-shadow: 0 4px 14px rgba(102, 192, 244, 0.35);
   color: #ffffff;
+}
+
+.store-logo-xbox {
+  background: radial-gradient(circle at top left, rgba(16, 124, 16, 0.35), rgba(15, 23, 42, 0.8));
+  color: #107c10;
+  border: 1px solid rgba(16, 124, 16, 0.45);
+  box-shadow: 0 2px 8px rgba(16, 124, 16, 0.2);
+}
+
+.store-logo-xbox:hover {
+  border-color: rgba(16, 124, 16, 0.75);
+  box-shadow: 0 4px 14px rgba(16, 124, 16, 0.4);
+  color: #22c55e;
 }
 
 .store-logo-generic {
@@ -500,5 +522,11 @@ defineEmits(['clear-traffic']);
   background: linear-gradient(90deg, #38bdf8, #818cf8);
   border-radius: 999px;
   transition: width 0.2s ease-out;
+}
+
+.platform-tag-svg {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 </style>

@@ -250,6 +250,9 @@ func (db *DB) initSchema() error {
 		last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE INDEX IF NOT EXISTS idx_game_meta_app ON game_meta_cache(service, app_id);
+	CREATE INDEX IF NOT EXISTS idx_game_meta_name ON game_meta_cache(service, name);
+
 	CREATE TABLE IF NOT EXISTS update_logs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		app_id INTEGER NOT NULL,
@@ -307,6 +310,7 @@ func (db *DB) seedDefaults() error {
 		"cache_chunk_size":          "1048576",       // 1 MB
 		"scheduler_enabled":         "true",
 		"service_steam_auto_update": "true",
+		"service_xbox_auto_update":  "true",
 	}
 
 	for k, v := range defaultSettings {
@@ -1160,6 +1164,8 @@ func (db *DB) UpsertGameMeta(id, service string, appID int64, name, platform str
 		INSERT INTO game_meta_cache (id, service, app_id, name, platform, last_updated)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
+			app_id = excluded.app_id,
+			service = excluded.service,
 			name = excluded.name,
 			platform = excluded.platform,
 			last_updated = CURRENT_TIMESTAMP;

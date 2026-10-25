@@ -476,13 +476,33 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 		if err != nil {
 			continue
 		}
-		req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		if service == "xbox" {
+			req.Header.Set("User-Agent", "Xbox/2401.1001.17.0")
+		} else {
+			req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
+		}
 		req.Header.Set("X-Artesian-Prefill", "1")
 		req.Header.Set("X-Artesian-Loop", "1")
 
+		// If this is a range-sliced chunk (e.g. /path.msixvc@range=0-1048575), send Range header
+		if strings.Contains(chunk.ChunkID, "@range=") {
+			parts := strings.Split(chunk.ChunkID, "@range=")
+			if len(parts) == 2 {
+				req.Header.Set("Range", fmt.Sprintf("bytes=%s", parts[1]))
+			}
+		}
+
 		resp, err := m.httpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			destPath, written, storeErr := m.cache.Store(service, req.URL.Path, resp.Body)
+		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
+			storageKey := req.URL.Path
+			if service != "steam" {
+				storageKey = chunk.ChunkID
+				if !strings.HasPrefix(storageKey, "/") && strings.HasPrefix(req.URL.Path, "/") {
+					storageKey = "/" + storageKey
+				}
+			}
+
+			destPath, written, storeErr := m.cache.Store(service, storageKey, resp.Body)
 			_ = resp.Body.Close()
 			if storeErr == nil && m.db != nil {
 				_ = m.db.RecordChunk(chunk.ChunkID, service, depotID, appID, written, destPath)

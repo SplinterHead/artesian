@@ -491,6 +491,13 @@ function getStatusBadgeClass(status) {
   box-shadow: 0 1px 4px rgba(102, 192, 244, 0.15);
 }
 
+.pill-xbox {
+  background: rgba(16, 124, 16, 0.15);
+  color: #107c10;
+  border: 1px solid rgba(16, 124, 16, 0.35);
+  box-shadow: 0 1px 4px rgba(16, 124, 16, 0.15);
+}
+
 /* Inline Editable Cron Cell Styles */
 .cron-cell {
   position: relative;

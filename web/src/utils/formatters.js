@@ -70,6 +70,11 @@ export function getLogoKey(service, store) {
   return 'steam';
 }
 
+export function isXboxPlatform(platform) {
+  const p = (platform || '').toLowerCase();
+  return p.includes('xbox') || p.includes('series');
+}
+
 export function getPlatformIcon(platform) {
   const p = (platform || '').toLowerCase();
   if (p.includes('mac') || p.includes('apple') || p.includes('darwin') || p.includes('osx')) {
@@ -78,8 +83,8 @@ export function getPlatformIcon(platform) {
   if (p.includes('linux')) {
     return 'fa-brands fa-linux';
   }
-  if (p.includes('win') || p.includes('pc') || p.includes('xbox')) {
-    return 'fa-brands fa-windows';
+  if (p.includes('xbox') || p.includes('series')) {
+    return 'fa-brands fa-xbox';
   }
   return 'fa-brands fa-windows';
 }

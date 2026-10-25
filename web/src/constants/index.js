@@ -27,4 +27,28 @@ export const DEFAULT_SERVICES = [
     description:
       'Depot manifest decryption, PICS change polling, and high-throughput chunk caching.',
   },
+  {
+    id: 'xbox',
+    display_name: 'Xbox / Microsoft Store',
+    company: 'Microsoft',
+    status: 'disconnected',
+    intercept_enabled: true,
+    auto_update: true,
+    username: '',
+    domains: [
+      '*.assets1.xboxlive.com',
+      '*.xvcf1.xboxlive.com',
+      'assets1.xboxlive.com',
+      'xvcf1.xboxlive.com',
+      '*.dl.delivery.mp.microsoft.com',
+      'dl.delivery.mp.microsoft.com',
+      'tlu.dl.delivery.mp.microsoft.com',
+      '*.delivery.mp.microsoft.com',
+      '*.update.microsoft.com',
+      '*.windowsupdate.com',
+      '*.mp.microsoft.com',
+    ],
+    description:
+      'OAuth2 Device Code authentication, Package Service & Delivery Optimization, 1MB byte-range chunk pre-fetching.',
+  },
 ];

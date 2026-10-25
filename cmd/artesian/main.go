@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"artesian/internal/adapters/steam"
+	"artesian/internal/adapters/xbox"
 	"artesian/internal/api"
 	"artesian/internal/cache"
 	"artesian/internal/config"
@@ -72,6 +73,10 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	steamAdapter := steam.NewAdapter(database, storage, &cfg.DNS)
 	registry.Register(steamAdapter)
 	log.Println("[Artesian] Service registered: Steam")
+
+	xboxAdapter := xbox.NewAdapter(database, storage, &cfg.DNS)
+	registry.Register(xboxAdapter)
+	log.Println("[Artesian] Service registered: Xbox / Microsoft Store")
 
 	// 6. Initialize Prefill & Scheduler Subsystems
 	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)
