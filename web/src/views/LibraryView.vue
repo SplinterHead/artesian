@@ -74,7 +74,10 @@
                         :viewBox="platformLogos.xbox.viewBox"
                         aria-hidden="true"
                       >
-                        <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                        <path
+                          :d="platformLogos.xbox.path"
+                          :fill="platformLogos.xbox.fill || '#107c10'"
+                        />
                       </svg>
                       <i v-else :class="getPlatformIcon(p)"></i>
                     </span>
@@ -220,7 +223,10 @@
                         :viewBox="platformLogos.xbox.viewBox"
                         aria-hidden="true"
                       >
-                        <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                        <path
+                          :d="platformLogos.xbox.path"
+                          :fill="platformLogos.xbox.fill || '#107c10'"
+                        />
                       </svg>
                       <i v-else :class="getPlatformIcon(p)"></i>
                     </span>

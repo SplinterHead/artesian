@@ -110,18 +110,42 @@ func ParseSteamChunkExtract(path string) (int64, string, bool) {
 	return 0, "", false
 }
 
+var epicChunkRegex = regexp.MustCompile(`([0-9a-fA-F_]{32,64})\.chunk`)
+
+// ParseEpicChunkExtract extracts chunkID if URL or key is an Epic Games chunk
+func ParseEpicChunkExtract(path string) (string, bool) {
+	matches := epicChunkRegex.FindStringSubmatch(path)
+	if len(matches) == 2 {
+		return strings.ToUpper(matches[1]), true
+	}
+	clean := strings.Trim(path, "/")
+	clean = strings.TrimSuffix(clean, ".chunk")
+	if strings.Contains(clean, "_") && len(clean) >= 32 && len(clean) <= 64 {
+		return strings.ToUpper(clean), true
+	}
+	return "", false
+}
+
 // KeyToPath computes the storage path on the tank for a given service and chunk key
 func (s *Storage) KeyToPath(service, key string) string {
 	s.mu.RLock()
 	baseDir := s.baseDir
 	s.mu.RUnlock()
 
-	// If Steam chunk format /depot/<depot_id>/chunk/<chunk_hash>
-	if service == "steam" {
+	switch strings.ToLower(service) {
+	case "steam":
+		// If Steam chunk format /depot/<depot_id>/chunk/<chunk_hash>
 		if depotID, chunkHash, ok := ParseSteamChunkExtract(key); ok {
 			prefix1 := chunkHash[0:2]
 			prefix2 := chunkHash[2:4]
 			return filepath.Join(baseDir, "steam", fmt.Sprintf("%d", depotID), prefix1, prefix2, chunkHash)
+		}
+	case "epic":
+		// If Epic chunk format .../{Hash}_{GUID}.chunk
+		if chunkID, ok := ParseEpicChunkExtract(key); ok {
+			prefix1 := chunkID[0:2]
+			prefix2 := chunkID[2:4]
+			return filepath.Join(baseDir, "epic", prefix1, prefix2, chunkID+".chunk")
 		}
 	}
 

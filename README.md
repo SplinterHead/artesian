@@ -10,24 +10,28 @@ Designed to replace complex, fragmented, and multi-container legacy network cach
 
 ## Key Features
 
+- **Multi-Platform Game Caching Engine:**
+  Unified caching support for **Steam**, **Xbox & Microsoft Store**, and **Epic Games** in a single appliance.
 - **Embedded DNS Interceptor & Upstream Forwarder:**
-  Intercepts DNS queries for Steam game distribution CDNs and rewrites them to the local proxy IP. Transparently forwards all regular DNS queries to upstream resolvers (Cloudflare, Google, or local gateways) with zero configuration overhead.
-- **High-Throughput HTTP Chunk Cache:**
-  Content-addressable local storage layer optimized for NVMe and SSD drives. Seamlessly streams cached game chunks to LAN clients at multi-gigabit wire speed.
-- **Authenticated Account Integration (Steam):**
-  Direct connection to the Steam Connection Manager (CM) and Steam Web API (`IPlayerService`). Automatically discovers your genuine owned game library with Steam Guard 2FA support and persistent session storage.
-- **Dynamic Game Library with Searchable Text Filter:**
-  Interactive Game Add modal that transforms into a real-time text filter input when opened, allowing instant lookup by title or App ID across hundreds of owned games, complete with arrow-key navigation.
+  Intercepts DNS queries for game distribution CDNs (Steam, Xbox Delivery Optimization, Epic CDN edges) and rewrites them to the local proxy IP. Transparently forwards standard DNS queries to upstream resolvers (Cloudflare, Google, or local gateways) with zero configuration overhead.
+- **High-Throughput HTTP Chunk Cache & Monolithic Slicing:**
+  - **Steam & Epic:** Content-addressable chunk storage layer optimized for NVMe and SSD drives. Seamlessly streams cached game chunks to LAN clients at multi-gigabit wire speed.
+  - **Xbox / Microsoft Store:** Byte-range alignment and slicing engine that chunks monolithic packages (`.msixvc`, `.xvc`) into uniform 1MB blocks (`@range=0-1048575`), serving `206 Partial Content` directly from local NVMe/SSD storage.
+- **Authenticated Account Integrations:**
+  - **Steam:** Direct connection to the Steam Connection Manager (CM) and Steam Web API (`IPlayerService`). Supports Steam Guard 2FA, mobile push notification approval polling, and genuine owned game discovery.
+  - **Xbox & Microsoft Store:** Frictionless MSA OAuth2 Device Code flow (`microsoft.com/devicelogin`), dual-token exchange (XAU/XSTS), TitleHub personal library enumeration, and an on-demand Game Pass catalog toggle.
+  - **Epic Games:** OAuth2 launcher client emulation with persistent token refresh, asset catalog discovery, and support for both binary zlib manifests (`0x44BEC00C`) and decimal-blob JSON manifests.
 - **Automated Depot Caching & Prefill Pipeline:**
   Automatically triggers depot caching the moment a game is added to your library, delta-diffing missing chunks against local storage.
 - **Live Active Downloads Telemetry:**
   Monitors ongoing client traffic and internal prefill operations in real time. Internal cache warming displays with a distinct **Artesian** client badge, clickable SteamDB depot links, transfer rates, percentage badges, and animated progress bars.
 - **Automated Cron Timers & Realtime Update Checks:**
-  Built-in scheduler to periodically check for new game patches and automatically warm the local cache before users even initiate downloads.
+  Built-in scheduler to periodically check for new game patches across all connected platforms and automatically warm the local cache before users initiate downloads.
 - **Unified Vue.js Control Center:**
   Single-page web dashboard providing live cache hit ratios, bandwidth savings, service switches, cron management, and prefill progress tracking.
-- **Lightweight & Single-Binary Architecture:**
-  No fragile webs of separate DNS containers, Nginx reverse proxies, or external glue scripts.
+
+> [!WARNING]
+> **Epic Games Client Requirement**: The official Epic Games Launcher strictly enforces HTTPS with SSL certificate pinning for all downloads and will not route through local HTTP proxy caches. Epic Games LAN caching is designed for and requires **unofficial / third-party launchers** (such as [Legendary](https://github.com/derrod/legendary), [Heroic Games Launcher](https://heroicgameslauncher.com/), or [Rare](https://github.com/Dummerle/Rare)) configured to download manifests and chunks over plain HTTP.
 
 ---
 
@@ -55,7 +59,7 @@ Upstream DNS         Redirect to           Direct NVMe Stream      Pass-Through 
 (e.g. 1.1.1.1)       Artesian Proxy        to Client               Async Disk Cache
 ```
 
-For a comprehensive explanation of components and request lifecycles, see the [Architecture Documentation](docs/architecture.md).
+For a comprehensive explanation of components and request lifecycles, see the [Architecture Documentation](docs/architecture.md) and [Game Services Guide](docs/services-guide.md).
 
 ---
 
@@ -67,24 +71,31 @@ artesian/
 │   └── artesian/              # Unified production daemon entrypoint
 │       └── main.go
 ├── internal/
+│   ├── adapters/              # Hexagonal platform adapters
+│   │   ├── epic/              # Epic Games OAuth2, manifests, and CDN chunk resolver
+│   │   ├── steam/             # Steam CM WebSockets, Steam Guard, and depot resolver
+│   │   └── xbox/              # Xbox MSA Device Code, TitleHub, DO range slicer
 │   ├── api/                   # REST & WebSocket API endpoints for web UI
 │   ├── cache/                 # Content-addressable chunk storage & eviction
-│   ├── config/                # Runtime configuration models & YAML parser
+│   ├── config/                # Runtime configuration models
 │   ├── db/                    # SQLite state store (watched games, chunks, metrics)
 │   ├── dns/                   # UDP DNS server, pattern matcher, & forwarder
+│   ├── manifest/              # Manifest pool parser and archive extractor
+│   ├── ports/                 # Hexagonal architecture port interfaces
 │   ├── prefill/               # Content prefill & cache warming orchestrator
 │   ├── proxy/                 # HTTP reverse proxy, pass-through, & cache engine
 │   ├── scheduler/             # Cron timers & automated update checker
-│   └── services/              # Game platform modules (Steam)
-├── configs/
-│   └── artesian.example.yaml  # Default configuration template
+│   ├── services/              # Platform adapter registry & multi-store router
+│   └── ws/                    # Real-time WebSocket hub
 ├── docs/
 │   ├── architecture.md        # Deep dive into system components
 │   ├── dns-interception.md    # DNS interception and forwarding guide
-│   └── services-guide.md      # Game platform CDN specifications
+│   └── services-guide.md      # Game platform CDN specifications & client guide
 ├── web/                       # Vue 3 + Vite management frontend
 │   ├── src/
-│   │   ├── App.vue            # Dashboard, services, prefill, & cron views
+│   │   ├── components/        # Modals (AddGameModal, PlatformLoginModal, etc.)
+│   │   ├── views/             # Dashboard, Accounts, Library, Updates, Settings
+│   │   ├── App.vue            # Shell & navigation layout
 │   │   └── main.js
 │   ├── embed.go               # Go embed.FS for compiling Vue dist into binary
 │   ├── index.html

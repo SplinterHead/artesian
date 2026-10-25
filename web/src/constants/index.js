@@ -51,4 +51,25 @@ export const DEFAULT_SERVICES = [
     description:
       'OAuth2 Device Code authentication, Package Service & Delivery Optimization, 1MB byte-range chunk pre-fetching.',
   },
+  {
+    id: 'epic',
+    display_name: 'Epic Games',
+    company: 'Epic Games',
+    status: 'disconnected',
+    intercept_enabled: true,
+    auto_update: true,
+    username: '',
+    domains: [
+      'download*.epicgames.com',
+      '*.download.epicgames.com',
+      'cdn*.epicgames.com',
+      '*.epicgamescdn.com',
+      'epicgames-download*.akamaized.net',
+      '*download*.fastly-edge.com',
+      'fastly-download.epicgames.com',
+      '*.unrealengine.com',
+    ],
+    description:
+      'OAuth2 launcher authorization, binary manifest parsing, and high-throughput chunk caching.',
+  },
 ];

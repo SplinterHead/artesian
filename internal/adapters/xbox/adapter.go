@@ -24,10 +24,10 @@ type CachedPackage struct {
 	Title                string   `json:"title"`
 	Platforms            []string `json:"platforms"`
 	CdnRoots             []string `json:"cdn_roots"`
-	BasePackageURL       string   `json:"base_package_url"`        // .msixvc or .xvc relative path
-	PieceHashFileURL     string   `json:"piece_hash_file_url"`     // .phf relative path
+	BasePackageURL       string   `json:"base_package_url"`       // .msixvc or .xvc relative path
+	PieceHashFileURL     string   `json:"piece_hash_file_url"`    // .phf relative path
 	ContentDescriptorURL string   `json:"content_descriptor_url"` // .ecd relative path
-	PackageSize          int64    `json:"package_size"`            // Total byte size of the monolithic archive
+	PackageSize          int64    `json:"package_size"`           // Total byte size of the monolithic archive
 	PhfSize              int64    `json:"phf_size"`
 	EcdSize              int64    `json:"ecd_size"`
 	ResolvedAt           time.Time
@@ -43,23 +43,23 @@ type Adapter struct {
 	domains       []string
 
 	// Auth state
-	authMu        sync.RWMutex
-	state         ports.AuthState
-	gamertag      string
-	xuid          string
-	userHash      string // uhs
-	msaToken      string // OAuth2 access token
-	msaRefresh    string // OAuth2 refresh token
-	xauToken      string // Xbox Live User Token
-	mpXstsToken   string // Scoped to http://mp.microsoft.com/
-	xblXstsToken  string // Scoped to http://xboxlive.com
+	authMu          sync.RWMutex
+	state           ports.AuthState
+	gamertag        string
+	xuid            string
+	userHash        string // uhs
+	msaToken        string // OAuth2 access token
+	msaRefresh      string // OAuth2 refresh token
+	xauToken        string // Xbox Live User Token
+	mpXstsToken     string // Scoped to http://mp.microsoft.com/
+	xblXstsToken    string // Scoped to http://xboxlive.com
 	updateXstsToken string // Scoped to http://update.xboxlive.com
-	tokenExpiry   time.Time
-	userCode      string
+	tokenExpiry     time.Time
+	userCode        string
 	verificationURL string
-	expiresIn     int
-	cancelPoll    context.CancelFunc
-	errorMessage  string
+	expiresIn       int
+	cancelPoll      context.CancelFunc
+	errorMessage    string
 
 	// Package & Catalog Caches
 	pkgMu       sync.RWMutex
@@ -69,7 +69,7 @@ type Adapter struct {
 }
 
 var (
-	_ ports.PlatformAdapter  = (*Adapter)(nil)
+	_ ports.PlatformAdapter   = (*Adapter)(nil)
 	_ ports.CatalogFilterPort = (*Adapter)(nil)
 )
 

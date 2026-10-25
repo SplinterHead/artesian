@@ -311,6 +311,7 @@ func (db *DB) seedDefaults() error {
 		"scheduler_enabled":         "true",
 		"service_steam_auto_update": "true",
 		"service_xbox_auto_update":  "true",
+		"service_epic_auto_update":  "true",
 	}
 
 	for k, v := range defaultSettings {

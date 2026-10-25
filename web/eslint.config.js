@@ -14,6 +14,7 @@ export default [
       globals: {
         window: 'readonly',
         document: 'readonly',
+        navigator: 'readonly',
         fetch: 'readonly',
         console: 'readonly',
         setInterval: 'readonly',

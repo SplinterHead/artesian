@@ -184,11 +184,20 @@ const xboxStatus = ref({
   username: '',
   has_valid_auth: false,
 });
+const epicStatus = ref({
+  state: 'disconnected',
+  username: '',
+  has_valid_auth: false,
+});
 const activeAuthStatus = computed(() => {
-  if (activeLoginService.value?.id === 'xbox') {
-    return xboxStatus.value;
+  switch (activeLoginService.value?.id) {
+    case 'xbox':
+      return xboxStatus.value;
+    case 'epic':
+      return epicStatus.value;
+    default:
+      return steamStatus.value;
   }
-  return steamStatus.value;
 });
 const showLoginModal = ref(false);
 const show2FAModal = ref(false);
@@ -321,6 +330,27 @@ const { wsConnected } = useWebSocket({
       loggingIn.value = false;
     }
   },
+  'epic:status': (data) => {
+    epicStatus.value = data;
+    const ep = servicesList.value.find((s) => s.id === 'epic');
+    if (ep) {
+      ep.status = data.state;
+      ep.username = data.username;
+    }
+    if (data.state === 'connected') {
+      if (ep) ep.auto_update = true;
+      loggingIn.value = false;
+      loginError.value = '';
+      showLoginModal.value = false;
+      fetchLibrary();
+      fetchServices();
+    } else if (data.state === 'error') {
+      loggingIn.value = false;
+      loginError.value = data.error_message || 'Epic Games authentication failed';
+    } else if (data.state === 'connecting') {
+      loggingIn.value = false;
+    }
+  },
   'steam:2fa_required': (data) => {
     loggingIn.value = false;
     showLoginModal.value = false;
@@ -404,6 +434,17 @@ async function fetchXboxStatus() {
     if (xb) {
       xb.status = xboxStatus.value.state;
       xb.username = xboxStatus.value.username;
+    }
+  } catch {}
+}
+
+async function fetchEpicStatus() {
+  try {
+    epicStatus.value = await api.getEpicStatus();
+    const ep = servicesList.value.find((s) => s.id === 'epic');
+    if (ep && epicStatus.value) {
+      ep.status = epicStatus.value.state;
+      ep.username = epicStatus.value.username;
     }
   } catch {}
 }
@@ -518,16 +559,17 @@ function handleOpenLoginModal(svc) {
   loginError.value = '';
   loggingIn.value = false;
 
-  const isSteamAwaiting2FA =
-    serviceObj.id === 'steam' &&
-    (steamStatus.value?.state === 'awaiting_2fa' || serviceObj.status === 'awaiting_2fa');
-
-  if (isSteamAwaiting2FA) {
-    showLoginModal.value = false;
-    show2FAModal.value = true;
-  } else {
-    showLoginModal.value = true;
+  switch (serviceObj.id) {
+    case 'steam':
+      if (steamStatus.value?.state === 'awaiting_2fa' || serviceObj.status === 'awaiting_2fa') {
+        showLoginModal.value = false;
+        show2FAModal.value = true;
+        return;
+      }
+      break;
   }
+
+  showLoginModal.value = true;
 }
 
 function openSteam2FAModal() {
@@ -551,34 +593,61 @@ async function handlePlatformLogin(payload) {
   loginError.value = '';
   loggingIn.value = true;
 
-  if (service === 'xbox') {
-    try {
-      const data = await api.xboxLogin(payload.password);
-      if (data?.status) {
-        xboxStatus.value = data.status;
-        const xb = servicesList.value.find((s) => s.id === 'xbox');
-        if (xb) {
-          xb.status = data.status.state;
-          xb.username = data.status.username;
+  switch (service) {
+    case 'xbox':
+      try {
+        const data = await api.xboxLogin(payload.password);
+        if (data?.status) {
+          xboxStatus.value = data.status;
+          const xb = servicesList.value.find((s) => s.id === 'xbox');
+          if (xb) {
+            xb.status = data.status.state;
+            xb.username = data.status.username;
+          }
+          if (data.status.state === 'connected') {
+            if (xb) xb.auto_update = true;
+            loggingIn.value = false;
+            showLoginModal.value = false;
+            fetchLibrary();
+            fetchServices();
+            return;
+          }
         }
-        if (data.status.state === 'connected') {
-          if (xb) xb.auto_update = true;
-          loggingIn.value = false;
-          showLoginModal.value = false;
-          fetchLibrary();
-          fetchServices();
-          return;
-        }
+        loggingIn.value = false;
+      } catch (err) {
+        loggingIn.value = false;
+        loginError.value = err.message || 'Failed to authenticate with Xbox';
       }
-      loggingIn.value = false;
-    } catch (err) {
-      loggingIn.value = false;
-      loginError.value = err.message || 'Failed to authenticate with Xbox';
-    }
-    return;
-  }
+      return;
 
-  if (service === 'steam') {
+    case 'epic':
+      try {
+        const data = await api.epicLogin(payload.username);
+        if (data?.status) {
+          epicStatus.value = data.status;
+          const ep = servicesList.value.find((s) => s.id === 'epic');
+          if (ep) {
+            ep.status = data.status.state;
+            ep.username = data.status.username;
+          }
+          if (data.status.state === 'connected') {
+            if (ep) ep.auto_update = true;
+            loggingIn.value = false;
+            showLoginModal.value = false;
+            fetchLibrary();
+            fetchServices();
+            return;
+          }
+        }
+        loggingIn.value = false;
+      } catch (err) {
+        loggingIn.value = false;
+        loginError.value = err.message || 'Failed to authenticate with Epic Games';
+      }
+      return;
+
+    case 'steam':
+    default:
     loginUsername.value = payload.username;
     loginPassword.value = payload.password;
     try {
@@ -669,21 +738,29 @@ async function submit2FACode(code) {
 }
 
 async function handleCancelLogin() {
-  if (activeLoginService.value?.id === 'xbox') {
-    try {
-      await api.submit2FA('xbox', 'cancel');
-      await fetchXboxStatus();
-    } catch {}
+  switch (activeLoginService.value?.id) {
+    case 'xbox':
+      try {
+        await api.submit2FA('xbox', 'cancel');
+        await fetchXboxStatus();
+      } catch {}
+      break;
   }
 }
 
 async function handleLogoutService(serviceId) {
   try {
     await api.logout(serviceId);
-    if (serviceId === 'steam') {
-      await fetchSteamStatus();
-    } else if (serviceId === 'xbox') {
-      await fetchXboxStatus();
+    switch (serviceId) {
+      case 'steam':
+        await fetchSteamStatus();
+        break;
+      case 'xbox':
+        await fetchXboxStatus();
+        break;
+      case 'epic':
+        await fetchEpicStatus();
+        break;
     }
     await fetchServices();
   } catch (err) {
@@ -822,6 +899,7 @@ onMounted(() => {
   fetchStats();
   fetchSteamStatus();
   fetchXboxStatus();
+  fetchEpicStatus();
   fetchLibrary();
   fetchCachedGames();
   fetchScheduler();

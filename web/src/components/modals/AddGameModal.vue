@@ -131,7 +131,10 @@
         </div>
 
         <!-- Game Pass Inclusion Checkbox (only appears if account has active Game Pass) -->
-        <div v-if="selectedServiceId === 'xbox' && hasGamePass" class="game-pass-toggle-wrapper mt-2">
+        <div
+          v-if="selectedServiceId === 'xbox' && hasGamePass"
+          class="game-pass-toggle-wrapper mt-2"
+        >
           <label class="game-pass-checkbox-label">
             <input
               type="checkbox"
@@ -223,7 +226,10 @@
                     :viewBox="platformLogos.xbox.viewBox"
                     aria-hidden="true"
                   >
-                    <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                    <path
+                      :d="platformLogos.xbox.path"
+                      :fill="platformLogos.xbox.fill || '#107c10'"
+                    />
                   </svg>
                   <i v-else :class="getPlatformIcon(p)" class="mr-1"></i>
                   {{ p }}
@@ -264,7 +270,10 @@
                     :viewBox="platformLogos.xbox.viewBox"
                     aria-hidden="true"
                   >
-                    <path :d="platformLogos.xbox.path" :fill="platformLogos.xbox.fill || '#107c10'" />
+                    <path
+                      :d="platformLogos.xbox.path"
+                      :fill="platformLogos.xbox.fill || '#107c10'"
+                    />
                   </svg>
                   <i v-else :class="getPlatformIcon(p)"></i>
                 </div>
@@ -340,10 +349,12 @@ const includeGamePass = ref(false);
 const authenticatedServices = computed(() => {
   const list = props.servicesList || [];
   return list.filter((svc) => {
-    if (svc.id === 'steam') {
-      return props.steamStatus?.has_valid_auth || svc.status === 'connected';
+    switch (svc.id) {
+      case 'steam':
+        return props.steamStatus?.has_valid_auth || svc.status === 'connected';
+      default:
+        return svc.status === 'connected';
     }
-    return svc.status === 'connected';
   });
 });
 
@@ -714,6 +725,10 @@ function handleSubmit() {
 
 .store-bg-xbox {
   color: #107c10;
+}
+
+.store-bg-epic {
+  color: #ffffff;
 }
 
 /* Form Controls */

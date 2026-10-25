@@ -99,6 +99,17 @@ export const api = {
     return this.logout('xbox');
   },
 
+  // Convenience methods for Epic Games
+  async getEpicStatus() {
+    return this.getAuthStatus('epic');
+  },
+  async epicLogin(code = '') {
+    return this.login('epic', code, '');
+  },
+  async epicLogout() {
+    return this.logout('epic');
+  },
+
   // Library & Prefill
   async getLibrary() {
     return request('/api/v1/library');

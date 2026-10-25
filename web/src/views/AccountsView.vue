@@ -165,11 +165,15 @@ const emit = defineEmits([
 ]);
 
 function handleConnectButtonClick(svc) {
-  if (svc.id === 'steam' && svc.status === 'awaiting_2fa') {
-    emit('open-steam-2fa');
-  } else {
-    emit('open-login', svc);
+  switch (svc.id) {
+    case 'steam':
+      if (svc.status === 'awaiting_2fa') {
+        emit('open-steam-2fa');
+        return;
+      }
+      break;
   }
+  emit('open-login', svc);
 }
 
 function getServiceStatusText(svc) {
@@ -285,6 +289,13 @@ function getServiceStatusText(svc) {
   background: rgba(16, 124, 16, 0.12);
   border-color: rgba(16, 124, 16, 0.35);
   box-shadow: 0 0 12px rgba(16, 124, 16, 0.15);
+}
+
+.service-icon-box.icon-epic {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.08);
 }
 
 .service-title-area {

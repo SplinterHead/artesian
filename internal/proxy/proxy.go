@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"artesian/internal/adapters/epic"
 	"artesian/internal/cache"
 	"artesian/internal/config"
 	"artesian/internal/db"
@@ -16,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -102,16 +104,19 @@ var DepotRegex = regexp.MustCompile(`/depot/(\d+)`)
 
 // FormatStoreName normalizes internal service names to display store titles
 func FormatStoreName(service string) string {
-	if strings.EqualFold(service, "steam") {
+	switch strings.ToLower(service) {
+	case "steam":
 		return "Steam"
-	}
-	if strings.EqualFold(service, "xbox") {
+	case "xbox":
 		return "Xbox"
+	case "epic":
+		return "Epic Games"
+	default:
+		if len(service) == 0 {
+			return service
+		}
+		return strings.ToUpper(service[:1]) + strings.ToLower(service[1:])
 	}
-	if len(service) == 0 {
-		return service
-	}
-	return strings.ToUpper(service[:1]) + strings.ToLower(service[1:])
 }
 
 // responseObserver wraps http.ResponseWriter to capture response status, bytes, and support Flusher
@@ -305,19 +310,64 @@ func NewServer(cfg config.ProxyConfig, dnsCfg config.DNSConfig, c *cache.Storage
 								}
 							}
 
-							// 2. Steam manifest interception and automatic chunk indexing
-							if mDepotID, mID, isManifest := manifest.ParseManifestDepotFromURL(cKey); isManifest {
-								storageDir := "/data/cache"
-								if s.cache != nil {
-									storageDir = s.cache.GetBaseDir()
+							// 2. Platform manifest interception and automatic chunk indexing
+							switch strings.ToLower(svcName) {
+							case "steam":
+								if mDepotID, mID, isManifest := manifest.ParseManifestDepotFromURL(cKey); isManifest {
+									storageDir := "/data/cache"
+									if s.cache != nil {
+										storageDir = s.cache.GetBaseDir()
+									}
+									manifest.SaveRawManifest(storageDir, mDepotID, mID, data)
+									parsedChunks, pErr := manifest.ParseManifestBytes(data)
+									if pErr == nil && len(parsedChunks) > 0 {
+										log.Printf("[Artesian Proxy] Intercepted and indexed %d genuine chunks for depot %d (manifest %d)", len(parsedChunks), mDepotID, mID)
+										_ = s.db.SaveManifestChunks(mDepotID, mID, parsedChunks)
+									} else if pErr != nil {
+										log.Printf("[Artesian Proxy] Warning: Could not parse intercepted manifest for depot %d: %v", mDepotID, pErr)
+									}
 								}
-								manifest.SaveRawManifest(storageDir, mDepotID, mID, data)
-								parsedChunks, pErr := manifest.ParseManifestBytes(data)
-								if pErr == nil && len(parsedChunks) > 0 {
-									log.Printf("[Artesian Proxy] Intercepted and indexed %d genuine chunks for depot %d (manifest %d)", len(parsedChunks), mDepotID, mID)
-									_ = s.db.SaveManifestChunks(mDepotID, mID, parsedChunks)
-								} else if pErr != nil {
-									log.Printf("[Artesian Proxy] Warning: Could not parse intercepted manifest for depot %d: %v", mDepotID, pErr)
+							case "epic":
+								if strings.HasSuffix(strings.ToLower(cKey), ".manifest") || strings.HasSuffix(strings.ToLower(cKey), ".json") {
+									parsedManifest, pErr := epic.ParseManifest(data)
+									if pErr == nil && parsedManifest != nil && len(parsedManifest.Chunks) > 0 {
+										appName := extractEpicAppNameFromURL(cKey)
+										appID := epic.HashAppName(appName)
+										if appName == "" {
+											appName = fmt.Sprintf("Epic App %d", appID)
+										}
+
+										displayTitle := appName
+										if metaName, _, mErr := s.db.GetGameMeta(fmt.Sprintf("epic_%d", appID)); mErr == nil && metaName != "" {
+											displayTitle = metaName
+										}
+
+										log.Printf("[Artesian Proxy] Intercepted and indexed %d genuine Epic chunks for %s (App ID %d, Size %d)",
+											len(parsedManifest.Chunks), displayTitle, appID, parsedManifest.TotalSize)
+
+										chunkRecords := make([]db.ManifestChunkRecord, len(parsedManifest.Chunks))
+										for i, c := range parsedManifest.Chunks {
+											chunkRecords[i] = db.ManifestChunkRecord{
+												DepotID:      appID,
+												ManifestID:   1,
+												ChunkID:      c.ChunkID,
+												SizeBytes:    c.SizeBytes,
+												OriginalSize: c.SizeBytes,
+											}
+										}
+										_ = s.db.SaveManifestChunks(appID, 1, chunkRecords)
+										_ = s.db.UpsertDepotMeta(db.DepotMeta{
+											DepotID:    appID,
+											AppID:      appID,
+											Service:    "epic",
+											GameTitle:  displayTitle,
+											Platform:   "Windows",
+											TotalSize:  parsedManifest.TotalSize,
+											ManifestID: 1,
+										})
+									} else if pErr != nil {
+										log.Printf("[Artesian Proxy] Warning: Could not parse intercepted Epic manifest: %v", pErr)
+									}
 								}
 							}
 						}
@@ -1046,4 +1096,18 @@ func (s *Server) flushLogs(entries []dbLogEntry) {
 		_, _ = stmt.Exec(e.clientIP, e.host, e.method, e.path, e.status, e.isHit, e.bytes, e.duration)
 	}
 	_ = tx.Commit()
+}
+
+func extractEpicAppNameFromURL(urlPath string) string {
+	base := filepath.Base(urlPath)
+	base = strings.TrimSuffix(base, ".manifest")
+	base = strings.TrimSuffix(base, ".json")
+	if idx := strings.Index(base, "_"); idx > 0 {
+		return base[:idx]
+	}
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return base
 }

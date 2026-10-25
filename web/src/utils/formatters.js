@@ -58,16 +58,32 @@ export function formatChunkID(id) {
 
 export function formatStore(service) {
   const s = (service || '').toLowerCase();
-  if (s === 'steam') return 'Steam';
-  return service ? service.toUpperCase() : 'Steam';
+  switch (s) {
+    case 'steam':
+      return 'Steam';
+    case 'xbox':
+      return 'Xbox';
+    case 'epic':
+      return 'Epic Games';
+    default:
+      return service ? service.toUpperCase() : 'Steam';
+  }
 }
 
 export function getLogoKey(service, store) {
   const s = (service || '').toLowerCase();
   if (platformLogos[s]) return s;
   const st = (store || '').toLowerCase();
-  if (st.includes('steam')) return 'steam';
-  return 'steam';
+  switch (true) {
+    case st.includes('steam'):
+      return 'steam';
+    case st.includes('xbox'):
+      return 'xbox';
+    case st.includes('epic'):
+      return 'epic';
+    default:
+      return 'steam';
+  }
 }
 
 export function isXboxPlatform(platform) {

@@ -158,7 +158,53 @@
       </div>
     </div>
 
-    <!-- Case B: Standard Credentials Form (Steam & Generic) -->
+    <!-- Case B: Epic Games OAuth2 Code Flow -->
+    <div v-else-if="isEpicService" class="epic-auth-container">
+      <div class="device-login-card">
+        <div class="device-steps-list">
+          <!-- Step 1 -->
+          <div class="device-step-item">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <span class="step-label">Open the official Epic Games authorization page:</span>
+              <a
+                :href="svcConfig.oauthUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-sm btn-outline-primary btn-link-action mt-1"
+              >
+                <span>Open Epic Games Sign-In</span>
+                <i class="fa-solid fa-arrow-up-right-from-square ml-1 text-xs"></i>
+              </a>
+              <p class="text-xs text-muted mt-1 mb-0">
+                Log into your Epic account in your browser and approve launcher access.
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="device-step-item mt-3">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <span class="step-label">Paste the authorization code or JSON:</span>
+              <textarea
+                class="form-control font-mono text-xs mt-2"
+                rows="3"
+                v-model="epicCode"
+                :placeholder="svcConfig.codePlaceholder"
+                :disabled="loading"
+                @keyup.enter.ctrl="handleSubmit"
+              ></textarea>
+              <p class="text-xs text-muted mt-1 mb-0">
+                Paste the resulting 32-character code, redirect URL, or JSON response above.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Case C: Standard Credentials Form (Steam & Generic) -->
     <div v-else class="credentials-container">
       <div class="form-group mb-3">
         <label>{{ resolvedUsernameLabel }}:</label>
@@ -249,6 +295,16 @@ const SERVICE_DEFAULTS = {
     title: 'Xbox & Microsoft Store Authentication',
     submitText: 'Connect Xbox Account',
   },
+  epic: {
+    serviceName: 'Epic Games',
+    authType: 'oauth_code',
+    title: 'Connect Epic Games Account',
+    oauthUrl:
+      'https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode',
+    codePlaceholder:
+      'Paste code here (e.g. 859f518a4a2b4b4bb2e8f1dd63... or {"authorizationCode":"..."})',
+    submitText: 'Connect Epic Account',
+  },
 };
 
 const props = defineProps({
@@ -299,12 +355,23 @@ const emit = defineEmits(['update:modelValue', 'submit', 'cancel']);
 // Form fields
 const username = ref('');
 const password = ref('');
+const epicCode = ref('');
 const showRefreshTokenInput = ref(false);
 const codeCopied = ref(false);
 
-const isXboxService = computed(() => {
-  return props.service?.toLowerCase() === 'xbox';
+const authFlowType = computed(() => {
+  switch (props.service?.toLowerCase()) {
+    case 'xbox':
+      return 'xbox';
+    case 'epic':
+      return 'epic';
+    default:
+      return 'credentials';
+  }
 });
+
+const isXboxService = computed(() => authFlowType.value === 'xbox');
+const isEpicService = computed(() => authFlowType.value === 'epic');
 
 const svcConfig = computed(() => {
   return SERVICE_DEFAULTS[props.service?.toLowerCase()] || {};
@@ -347,13 +414,17 @@ const activeVerificationUrl = computed(() => {
 });
 
 const canSubmit = computed(() => {
-  if (isXboxService.value) {
-    if (showRefreshTokenInput.value) {
-      return !!password.value.trim();
-    }
-    return true;
+  switch (props.service?.toLowerCase()) {
+    case 'xbox':
+      if (showRefreshTokenInput.value) {
+        return !!password.value.trim();
+      }
+      return true;
+    case 'epic':
+      return !!epicCode.value.trim();
+    default:
+      return !!username.value.trim() && !!password.value;
   }
-  return !!username.value.trim() && !!password.value;
 });
 
 watch(
@@ -362,16 +433,21 @@ watch(
     if (isOpen) {
       username.value = '';
       password.value = '';
+      epicCode.value = '';
       showRefreshTokenInput.value = false;
       codeCopied.value = false;
 
       // Automatically trigger device code generation if opening Xbox modal
-      if (isXboxService.value && !activeUserCode.value) {
-        emit('submit', {
-          service: 'xbox',
-          username: '',
-          password: '',
-        });
+      switch (props.service?.toLowerCase()) {
+        case 'xbox':
+          if (!activeUserCode.value) {
+            emit('submit', {
+              service: 'xbox',
+              username: '',
+              password: '',
+            });
+          }
+          break;
       }
     }
   }
@@ -388,11 +464,22 @@ function handleStartDeviceLogin() {
 function handleSubmit() {
   if (props.loading || !canSubmit.value) return;
 
-  emit('submit', {
-    service: props.service,
-    username: username.value.trim(),
-    password: password.value.trim(),
-  });
+  switch (props.service?.toLowerCase()) {
+    case 'epic':
+      emit('submit', {
+        service: 'epic',
+        username: epicCode.value.trim(),
+        password: '',
+      });
+      break;
+    default:
+      emit('submit', {
+        service: props.service,
+        username: username.value.trim(),
+        password: password.value.trim(),
+      });
+      break;
+  }
 }
 
 function handleCancel() {
@@ -481,6 +568,13 @@ function openVerificationLink() {
   color: #107c10;
   border: 1px solid rgba(16, 124, 16, 0.45);
   box-shadow: 0 2px 8px rgba(16, 124, 16, 0.2);
+}
+
+.store-logo-epic {
+  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), rgba(20, 20, 20, 0.85));
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
 }
 
 .modal-title-text {

@@ -476,9 +476,12 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 		if err != nil {
 			continue
 		}
-		if service == "xbox" {
+		switch strings.ToLower(service) {
+		case "xbox":
 			req.Header.Set("User-Agent", "Xbox/2401.1001.17.0")
-		} else {
+		case "epic":
+			req.Header.Set("User-Agent", "EpicGamesLauncher/14.0.0")
+		default:
 			req.Header.Set("User-Agent", "Valve/Steam HTTP Client 1.0")
 		}
 		req.Header.Set("X-Artesian-Prefill", "1")
@@ -492,33 +495,106 @@ func (m *Manager) downloadChunk(service string, appID, depotID int64, chunk Chun
 			}
 		}
 
-		resp, err := m.httpClient.Do(req)
-		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
-			storageKey := req.URL.Path
-			if service != "steam" {
-				storageKey = chunk.ChunkID
-				if !strings.HasPrefix(storageKey, "/") && strings.HasPrefix(req.URL.Path, "/") {
-					storageKey = "/" + storageKey
-				}
-			}
-
-			destPath, written, storeErr := m.cache.Store(service, storageKey, resp.Body)
-			_ = resp.Body.Close()
-			if storeErr == nil && m.db != nil {
-				_ = m.db.RecordChunk(chunk.ChunkID, service, depotID, appID, written, destPath)
-			}
+		status, ok := m.fetchAndCacheChunk(req, service, depotID, appID, chunk)
+		if ok {
 			downloaded = true
 			break
 		}
-		if resp != nil {
-			_ = resp.Body.Close()
+
+		// If 404 on Epic CDN, try alternative chunk subdirectories (e.g. ChunksV4 <-> Chunks)
+		if status == http.StatusNotFound {
+			switch strings.ToLower(service) {
+			case "epic":
+				if m.tryEpicDirectoryFallback(req, depotID, appID, chunk) {
+					downloaded = true
+					break
+				}
+			}
+			if downloaded {
+				break
+			}
 		}
+
+		log.Printf("[Prefill Engine] Chunk %s download attempt from %s failed: status=%d", chunk.ChunkID, reqURL, status)
 	}
 
 	// If remote download was unsuccessful
 	if !downloaded {
 		log.Printf("[Prefill Engine] Warning: Could not download chunk %s for depot %d from CDN", chunk.ChunkID, depotID)
 	}
+}
+
+// fetchAndCacheChunk performs the HTTP request, stores the response body in cache, and records it in SQLite.
+func (m *Manager) fetchAndCacheChunk(req *http.Request, service string, depotID, appID int64, chunk ChunkMeta) (int, bool) {
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return resp.StatusCode, false
+	}
+
+	storageKey := req.URL.Path
+	switch strings.ToLower(service) {
+	case "steam", "epic":
+		// Standard URL path storage key
+	default:
+		storageKey = chunk.ChunkID
+		if !strings.HasPrefix(storageKey, "/") && strings.HasPrefix(req.URL.Path, "/") {
+			storageKey = "/" + storageKey
+		}
+	}
+
+	destPath, written, storeErr := m.cache.Store(service, storageKey, resp.Body)
+	if storeErr != nil {
+		return resp.StatusCode, false
+	}
+	if m.db != nil {
+		_ = m.db.RecordChunk(chunk.ChunkID, service, depotID, appID, written, destPath)
+	}
+	return resp.StatusCode, true
+}
+
+var epicChunkDirs = []string{"ChunksV4", "Chunks", "ChunksV3", "ChunksV2"}
+
+// epicAlternativeURLs returns candidate URLs with different chunk directory versions without nested loops.
+func epicAlternativeURLs(origURL string) []string {
+	var currentDir string
+	for _, dir := range epicChunkDirs {
+		if strings.Contains(origURL, "/"+dir+"/") {
+			currentDir = dir
+			break
+		}
+	}
+	if currentDir == "" {
+		return nil
+	}
+
+	var alts []string
+	for _, alt := range epicChunkDirs {
+		if alt != currentDir {
+			alts = append(alts, strings.Replace(origURL, "/"+currentDir+"/", "/"+alt+"/", 1))
+		}
+	}
+	return alts
+}
+
+// tryEpicDirectoryFallback tests alternative directory versions for Epic CDN 404 responses.
+func (m *Manager) tryEpicDirectoryFallback(req *http.Request, depotID, appID int64, chunk ChunkMeta) bool {
+	for _, altURL := range epicAlternativeURLs(req.URL.String()) {
+		altReq, err := http.NewRequestWithContext(context.Background(), "GET", altURL, nil)
+		if err != nil {
+			continue
+		}
+		altReq.Header = req.Header
+		_, ok := m.fetchAndCacheChunk(altReq, "epic", depotID, appID, chunk)
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) finalizeAppStatus(appID int64, service, name, status string) {

@@ -95,7 +95,7 @@ func (a *Adapter) ResolvePackage(appID int64) (*CachedPackage, error) {
 					CdnRootPaths           []string `json:"CdnRootPaths"`
 					BackgroundCdnRootPaths []string `json:"BackgroundCdnRootPaths"`
 				} `json:"PackageFiles"`
-				Packages             []struct {
+				Packages []struct {
 					PackageURL           string   `json:"PackageUrl"`
 					BasePackageURL       string   `json:"BasePackageUrl"`
 					PieceHashFileURL     string   `json:"PieceHashFileUrl"`

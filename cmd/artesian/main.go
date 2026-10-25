@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"artesian/internal/adapters/epic"
 	"artesian/internal/adapters/steam"
 	"artesian/internal/adapters/xbox"
 	"artesian/internal/api"
@@ -77,6 +78,10 @@ Unified Game Cache & Delivery Architecture [Go + VueJS]
 	xboxAdapter := xbox.NewAdapter(database, storage, &cfg.DNS)
 	registry.Register(xboxAdapter)
 	log.Println("[Artesian] Service registered: Xbox / Microsoft Store")
+
+	epicAdapter := epic.NewAdapter(database, storage, &cfg.DNS)
+	registry.Register(epicAdapter)
+	log.Println("[Artesian] Service registered: Epic Games")
 
 	// 6. Initialize Prefill & Scheduler Subsystems
 	prefillMgr := prefill.NewManager(storage, database, cfg.DNS, registry)
